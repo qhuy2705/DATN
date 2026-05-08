@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS public_contact_submissions (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    reference_code VARCHAR(40) NOT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NULL,
+    phone VARCHAR(32) NULL,
+    message TEXT NOT NULL,
+    source_page VARCHAR(255) NULL,
+    requester_ip VARCHAR(64) NULL,
+    user_agent VARCHAR(500) NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'RECEIVED',
+    emailed_at DATETIME NULL,
+    email_error VARCHAR(500) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_public_contact_reference_code (reference_code),
+    KEY idx_public_contact_created_at (created_at),
+    KEY idx_public_contact_status (status)
+);

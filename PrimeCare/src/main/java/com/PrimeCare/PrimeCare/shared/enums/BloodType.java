@@ -1,0 +1,9 @@
+package com.PrimeCare.PrimeCare.shared.enums;
+
+public enum BloodType {
+    A_PLUS, A_MINUS,
+    B_PLUS, B_MINUS,
+    AB_PLUS, AB_MINUS,
+    O_PLUS, O_MINUS,
+    UNKNOWN
+}
