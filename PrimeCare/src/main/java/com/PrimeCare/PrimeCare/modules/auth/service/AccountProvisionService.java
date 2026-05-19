@@ -31,7 +31,8 @@ public class AccountProvisionService {
     private static final java.util.Set<UserRole> ALLOWED_STAFF_ACCOUNT_ROLES = java.util.EnumSet.of(
             UserRole.STAFF,
             UserRole.CASHIER,
-            UserRole.SERVICE_TECHNICIAN
+            UserRole.SERVICE_TECHNICIAN,
+            UserRole.PHARMACIST
     );
 
     private final UserRepository userRepository;

@@ -30,7 +30,7 @@ public class ServiceResultController {
     private final ServiceResultService serviceResultService;
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('SERVICE_TECHNICIAN','OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('SERVICE_TECHNICIAN')")
     public ApiResponse<PageResponse<ServiceDeskQueueItemResponse>> search(
             @RequestParam(required = false) String departmentCode,
             @RequestParam(required = false) ServiceOrderItemStatus itemStatus,
@@ -50,7 +50,7 @@ public class ServiceResultController {
     }
 
     @GetMapping("/summary")
-    @PreAuthorize("hasAnyRole('SERVICE_TECHNICIAN','OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('SERVICE_TECHNICIAN')")
     public ApiResponse<ServiceDeskSummaryResponse> summary(
             @RequestParam(required = false) String departmentCode
     ) {
@@ -58,13 +58,13 @@ public class ServiceResultController {
     }
 
     @GetMapping("/{itemId}/history")
-    @PreAuthorize("hasAnyRole('SERVICE_TECHNICIAN','OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('SERVICE_TECHNICIAN')")
     public ApiResponse<java.util.List<AuditLogResponse>> history(@PathVariable Long itemId) {
         return ApiResponse.ok("OK", serviceResultService.history(itemId));
     }
 
     @PostMapping("/{itemId}")
-    @PreAuthorize("hasAnyRole('SERVICE_TECHNICIAN','OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('SERVICE_TECHNICIAN')")
     public ApiResponse<ServiceResultResponse> submit(
             @PathVariable Long itemId,
             Authentication authentication,
@@ -77,7 +77,7 @@ public class ServiceResultController {
     }
 
     @PostMapping("/{itemId}/verify")
-    @PreAuthorize("hasAnyRole('SERVICE_TECHNICIAN','OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('SERVICE_TECHNICIAN')")
     public ApiResponse<ServiceResultResponse> verify(
             @PathVariable Long itemId,
             Authentication authentication
@@ -89,7 +89,7 @@ public class ServiceResultController {
     }
 
     @GetMapping("/{itemId}/pdf")
-    @PreAuthorize("hasAnyRole('SERVICE_TECHNICIAN','OPERATIONS_ADMIN','DOCTOR')")
+    @PreAuthorize("hasRole('SERVICE_TECHNICIAN')")
     public ResponseEntity<byte[]> downloadPdf(
             @PathVariable Long itemId,
             Authentication authentication

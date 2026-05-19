@@ -44,6 +44,7 @@ import {
   useSaveBranch,
   useUpdateBranchStatus,
 } from '@/hooks/use-admin-data';
+import { getToggleStatusActionClass, statusToneClasses } from '@/lib/status-style-classes';
 import type { Branch } from '@/types/api';
 import type { LucideIcon } from 'lucide-react';
 
@@ -89,7 +90,7 @@ function SummaryCard({
   toneClass: string;
 }) {
   return (
-    <Card className="overflow-hidden rounded-2xl border border-border/60 bg-white shadow-sm">
+    <Card className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm">
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-2">
@@ -159,14 +160,14 @@ export default function BranchesAdminPage() {
     setEditing(row);
     setForm({
       code: row.code ?? '',
-      nameVn: row.name ?? '',
-      nameEn: row.name ?? '',
-      addressVn: row.address ?? '',
-      addressEn: row.address ?? '',
+      nameVn: row.nameVn ?? '',
+      nameEn: row.nameEn ?? '',
+      addressVn: row.addressVn ?? '',
+      addressEn: row.addressEn ?? '',
       phone: row.phone ?? '',
       email: row.email ?? '',
-      descriptionVn: row.description ?? '',
-      descriptionEn: row.description ?? '',
+      descriptionVn: row.descriptionVn ?? '',
+      descriptionEn: row.descriptionEn ?? '',
       imageUrl: row.imageUrl ?? '',
       status: row.status ?? 'ACTIVE',
     });
@@ -286,7 +287,7 @@ export default function BranchesAdminPage() {
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => setStatusTarget(row)}
-                className={row.status === 'ACTIVE' ? 'text-amber-700' : 'text-emerald-700'}
+                className={getToggleStatusActionClass(row.status === 'ACTIVE')}
               >
                 {row.status === 'ACTIVE' ? (
                   <PauseCircle className="mr-2 h-4 w-4" />
@@ -321,21 +322,21 @@ export default function BranchesAdminPage() {
           value={summary.total.toString()}
           hint="Theo bộ lọc hiện tại"
           icon={Building2}
-          toneClass="border-slate-200 bg-slate-50 text-slate-600"
+          toneClass={statusToneClasses.neutral}
         />
         <SummaryCard
           label="Đang hoạt động"
           value={summary.activeBranches.toString()}
           hint="Theo bộ lọc hiện tại"
           icon={RotateCcw}
-          toneClass="border-emerald-200 bg-emerald-50 text-emerald-700"
+          toneClass={statusToneClasses.success}
         />
         <SummaryCard
           label="Tạm ngưng"
           value={summary.inactiveBranches.toString()}
           hint="Theo bộ lọc hiện tại"
           icon={PauseCircle}
-          toneClass="border-amber-200 bg-amber-50 text-amber-700"
+          toneClass={statusToneClasses.warning}
         />
       </div>
 

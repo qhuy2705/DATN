@@ -1,0 +1,70 @@
+{
+  "version": "triage-rules-v1",
+  "items": [
+    {
+      "id": "chest_pain_with_dyspnea",
+      "ifAll": ["CHEST_PAIN", "DYSPNEA"],
+      "priority": "URGENT",
+      "level": "RED_FLAG",
+      "reason": "Bệnh nhân có đau ngực kèm khó thở"
+    },
+    {
+      "id": "stroke_signs",
+      "ifAny": ["STROKE_SIGNS"],
+      "priority": "URGENT",
+      "level": "RED_FLAG",
+      "reason": "Bệnh nhân có dấu hiệu nghi ngờ đột quỵ cần xác minh ngay"
+    },
+    {
+      "id": "fainting",
+      "ifAny": ["FAINTING"],
+      "priority": "URGENT",
+      "level": "RED_FLAG",
+      "reason": "Bệnh nhân có dấu hiệu ngất"
+    },
+    {
+      "id": "seizure",
+      "ifAny": ["SEIZURE"],
+      "priority": "URGENT",
+      "level": "RED_FLAG",
+      "reason": "Bệnh nhân có dấu hiệu co giật"
+    },
+    {
+      "id": "heavy_bleeding",
+      "ifAny": ["HEAVY_BLEEDING"],
+      "priority": "URGENT",
+      "level": "RED_FLAG",
+      "reason": "Bệnh nhân có dấu hiệu chảy máu nhiều"
+    },
+    {
+      "id": "allergic_reaction_with_dyspnea",
+      "ifAll": ["ALLERGIC_REACTION", "DYSPNEA"],
+      "priority": "URGENT",
+      "level": "RED_FLAG",
+      "reason": "Dị ứng kèm khó thở cần xác minh ngay"
+    },
+    {
+      "id": "heavy_bleeding_on_blood_thinner",
+      "ifAll": ["HEAVY_BLEEDING", "ON_BLOOD_THINNER"],
+      "priority": "URGENT",
+      "level": "RED_FLAG",
+      "reason": "Chảy máu nhiều kèm thông tin dùng thuốc chống đông"
+    },
+    {
+      "id": "high_fever_with_risk_modifier",
+      "ifAll": ["HIGH_FEVER"],
+      "ifAny": ["DIABETES_RISK", "IMMUNOCOMPROMISED", "ELDERLY", "DIALYSIS"],
+      "priority": "PRIORITY",
+      "level": "WATCH",
+      "reason": "Sốt cao kèm yếu tố nguy cơ cần được ưu tiên"
+    },
+    {
+      "id": "dialysis_acute_symptom",
+      "ifAll": ["DIALYSIS"],
+      "ifAny": ["ONSET_TODAY", "ONSET_DAYS_2_3", "HIGH_FEVER", "SEVERE"],
+      "priority": "PRIORITY",
+      "level": "WATCH",
+      "reason": "Thông tin suy thận/chạy thận kèm triệu chứng cấp cần staff chú ý"
+    }
+  ]
+}

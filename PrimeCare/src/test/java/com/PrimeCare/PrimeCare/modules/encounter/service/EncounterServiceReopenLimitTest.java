@@ -5,6 +5,8 @@ import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentReposit
 import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.auth.entity.User;
 import com.PrimeCare.PrimeCare.modules.auth.repository.UserRepository;
+import com.PrimeCare.PrimeCare.modules.booking_restriction.service.PatientViolationEventService;
+import com.PrimeCare.PrimeCare.modules.encounter.dto.request.UpdateEncounterRequest;
 import com.PrimeCare.PrimeCare.modules.encounter.dto.record.EncounterWorkflowState;
 import com.PrimeCare.PrimeCare.modules.encounter.entity.Encounter;
 import com.PrimeCare.PrimeCare.modules.encounter.repository.EncounterDiagnosisRepository;
@@ -45,6 +47,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 
 @ExtendWith(MockitoExtension.class)
 class EncounterServiceReopenLimitTest {
@@ -75,6 +78,8 @@ class EncounterServiceReopenLimitTest {
     private AfterCommitExecutor afterCommitExecutor;
     @Mock
     private AuditLogService auditLogService;
+    @Mock
+    private PatientViolationEventService patientViolationEventService;
 
     private EncounterService service;
 
@@ -93,7 +98,8 @@ class EncounterServiceReopenLimitTest {
                 appointmentMailEventPublisher,
                 realtimeEventPublisher,
                 afterCommitExecutor,
-                auditLogService
+                auditLogService,
+                patientViolationEventService
         );
         ReflectionTestUtils.setField(service, "maxReopenCount", 3);
     }
@@ -243,6 +249,105 @@ class EncounterServiceReopenLimitTest {
                 );
 
         verify(encounterRepository, never()).save(any());
+    }
+
+    @Test
+    void completeEncounterCreatesSuccessfulVisitCredit() {
+        DoctorProfile doctor = DoctorProfile.builder().id(3L).fullName("Dr Test").build();
+        User doctorUser = User.builder()
+                .id(9L)
+                .role(UserRole.DOCTOR)
+                .doctorProfile(doctor)
+                .email("doctor@example.test")
+                .build();
+        Appointment appointment = Appointment.builder()
+                .id(2L)
+                .code("APT-1")
+                .status(AppointmentStatus.CHECKED_IN)
+                .visitDate(LocalDate.now())
+                .session(BranchSessionType.AM)
+                .etaStart(LocalTime.of(8, 0))
+                .branch(Branch.builder().id(4L).nameVn("PrimeCare").build())
+                .specialty(Specialty.builder().id(5L).nameVn("Noi tong quat").build())
+                .doctor(doctor)
+                .patient(Patient.builder().id(6L).fullName("Patient Test").build())
+                .patientFullName("Patient Test")
+                .patientPhone("0900000000")
+                .build();
+        Encounter encounter = Encounter.builder()
+                .id(1L)
+                .code("ENC-1")
+                .appointment(appointment)
+                .branch(appointment.getBranch())
+                .specialty(appointment.getSpecialty())
+                .doctor(doctor)
+                .patient(appointment.getPatient())
+                .patientFullNameSnapshot("Patient Test")
+                .status(EncounterStatus.IN_PROGRESS)
+                .finalDiagnosis("Viêm họng")
+                .conclusion("Theo dõi")
+                .build();
+        UpdateEncounterRequest request = new UpdateEncounterRequest();
+        request.setFinalDiagnosis("Viêm họng");
+        request.setConclusion("Theo dõi");
+
+        when(userRepository.findById(9L)).thenReturn(Optional.of(doctorUser));
+        when(encounterRepository.findWithLockById(1L)).thenReturn(Optional.of(encounter));
+        when(encounterWorkflowService.getWorkflowState(encounter)).thenReturn(emptyWorkflowState());
+        when(encounterRepository.save(encounter)).thenReturn(encounter);
+        when(encounterDiagnosisRepository.findWithIcd10ByEncounterId(1L)).thenReturn(List.of());
+
+        service.complete(1L, 9L, request);
+
+        assertThat(appointment.getStatus()).isEqualTo(AppointmentStatus.COMPLETED);
+        verify(patientViolationEventService).recordSuccessfulVisitCredit(eq(appointment), eq(doctorUser));
+    }
+
+    @Test
+    void shouldUpdateOnlyProvidedEncounterFieldsWhenPatchRequestContainsNulls() {
+        DoctorProfile doctor = DoctorProfile.builder().id(3L).fullName("Dr Test").build();
+        User doctorUser = User.builder()
+                .id(9L)
+                .role(UserRole.DOCTOR)
+                .doctorProfile(doctor)
+                .email("doctor@example.test")
+                .build();
+        Encounter encounter = Encounter.builder()
+                .id(1L)
+                .code("ENC-1")
+                .appointment(Appointment.builder().id(2L).build())
+                .branch(Branch.builder().id(4L).nameVn("PrimeCare").build())
+                .specialty(Specialty.builder().id(5L).nameVn("Noi tong quat").build())
+                .doctor(doctor)
+                .patient(Patient.builder().id(6L).fullName("Patient Test").build())
+                .patientFullNameSnapshot("Patient Test")
+                .status(EncounterStatus.IN_PROGRESS)
+                .chiefComplaint("Đau đầu")
+                .clinicalNote("Ghi chú cũ")
+                .conclusion("Kết luận cũ")
+                .treatmentPlan("Kế hoạch cũ")
+                .followUpDate(LocalDate.now().plusDays(7))
+                .pulse(80)
+                .spo2(98)
+                .build();
+        UpdateEncounterRequest request = new UpdateEncounterRequest();
+        request.setClinicalNote("Ghi chú mới");
+
+        when(userRepository.findById(9L)).thenReturn(Optional.of(doctorUser));
+        when(encounterRepository.findById(1L)).thenReturn(Optional.of(encounter));
+        when(encounterRepository.save(encounter)).thenReturn(encounter);
+        when(encounterWorkflowService.getWorkflowState(encounter)).thenReturn(emptyWorkflowState());
+        when(encounterDiagnosisRepository.findWithIcd10ByEncounterId(1L)).thenReturn(List.of());
+
+        service.update(1L, 9L, request);
+
+        assertThat(encounter.getClinicalNote()).isEqualTo("Ghi chú mới");
+        assertThat(encounter.getChiefComplaint()).isEqualTo("Đau đầu");
+        assertThat(encounter.getConclusion()).isEqualTo("Kết luận cũ");
+        assertThat(encounter.getTreatmentPlan()).isEqualTo("Kế hoạch cũ");
+        assertThat(encounter.getFollowUpDate()).isEqualTo(LocalDate.now().plusDays(7));
+        assertThat(encounter.getPulse()).isEqualTo(80);
+        assertThat(encounter.getSpo2()).isEqualTo(98);
     }
 
     private EncounterWorkflowState emptyWorkflowState() {

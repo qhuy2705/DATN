@@ -98,7 +98,7 @@ public class PharmacyScheduledJobs {
                     InternalNotificationService.SEVERITY_CRITICAL,
                     "Job kiểm tra tồn kho thất bại",
                     "Job kiểm tra lô thuốc sắp hết hạn/tồn kho thấp thất bại.",
-                    "/app/admin/notifications",
+                    "/app/admin/dashboard",
                     "PHARMACY_JOB",
                     0L,
                     Map.of("error", e.getMessage() != null ? e.getMessage() : "")

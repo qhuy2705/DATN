@@ -47,6 +47,12 @@ public class ServiceOrderItem extends BaseEntity {
     private LocalDateTime completedAt;
     @Column(name = "cancelled_at")
     private LocalDateTime cancelledAt;
+    @Column(name = "refund_reason", length = 500)
+    private String refundReason;
+    @Column(name = "refunded_at")
+    private LocalDateTime refundedAt;
+    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "refunded_by_user_id")
+    private com.PrimeCare.PrimeCare.modules.auth.entity.User refundedByUser;
     @Column(name = "note", length = 500)
     private String note;
     @PrePersist void prePersist(){ if(status==null) status=ServiceOrderItemStatus.PENDING_PAYMENT; if(resultStatus==null) resultStatus=ServiceResultStatus.DRAFT; if(quantity==null) quantity=1; }

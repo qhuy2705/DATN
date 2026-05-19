@@ -30,7 +30,6 @@ public class DoctorSelfProfileService {
         User user = getRequiredDoctorUser(userId);
         DoctorProfile doctor = user.getDoctorProfile();
 
-        doctor.setFullName(req.getFullName().trim());
         doctor.setDisplayTitleVn(StringUtil.trimToNull(req.getDisplayTitleVn()));
         doctor.setDisplayTitleEn(StringUtil.trimToNull(req.getDisplayTitleEn()));
         doctor.setBioVn(StringUtil.trimToNull(req.getBioVn()));
@@ -41,7 +40,6 @@ public class DoctorSelfProfileService {
         doctor.setEducationEn(StringUtil.trimToNull(req.getEducationEn()));
         doctor.setAchievementsVn(StringUtil.trimToNull(req.getAchievementsVn()));
         doctor.setAchievementsEn(StringUtil.trimToNull(req.getAchievementsEn()));
-        doctor.setYearsExp(req.getYearsExp());
         doctor.setAvatarUrl(StringUtil.trimToNull(req.getAvatarUrl()));
 
         user = userRepository.save(user);

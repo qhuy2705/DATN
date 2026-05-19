@@ -68,7 +68,9 @@ public class ServiceOrderService {
 
     @Transactional
     public ServiceOrderResponse create(Long encounterId, Long doctorUserId, CreateServiceOrderRequest req) {
-        Encounter encounter = getEncounterForDoctor(encounterId, doctorUserId);
+        User doctor = userRepository.findById(doctorUserId)
+                                    .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED));
+        Encounter encounter = getEncounterForDoctorWithLock(encounterId, doctor);
 
         if (encounter.getStatus() == EncounterStatus.COMPLETED || encounter.getStatus() == EncounterStatus.CANCELLED) {
             throw new ApiException(ErrorCode.ENCOUNTER_INVALID_STATUS);
@@ -84,9 +86,6 @@ public class ServiceOrderService {
         )) {
             throw new ApiException(ErrorCode.SERVICE_ORDER_INVALID_STATUS, "Đang có phiếu chỉ định chưa hoàn tất cho lần khám này");
         }
-
-        User doctor = userRepository.findById(doctorUserId)
-                                    .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED));
 
         ServiceOrder order = ServiceOrder.builder()
                                          .code(generateCode(encounter))
@@ -178,6 +177,21 @@ public class ServiceOrderService {
                                   .orElseThrow(() -> new ApiException(ErrorCode.ENCOUNTER_NOT_FOUND));
     }
 
+    private Encounter getEncounterForDoctorWithLock(Long encounterId, User doctorUser) {
+        if (doctorUser.getDoctorProfile() == null || doctorUser.getDoctorProfile().getId() == null) {
+            throw new ApiException(ErrorCode.UNAUTHORIZED, "Bạn không thuộc bác sĩ phụ trách lần khám này");
+        }
+
+        Encounter encounter = encounterRepository.findWithLockById(encounterId)
+                .orElseThrow(() -> new ApiException(ErrorCode.ENCOUNTER_NOT_FOUND));
+        Long requesterDoctorId = doctorUser.getDoctorProfile().getId();
+        Long encounterDoctorId = encounter.getDoctor() != null ? encounter.getDoctor().getId() : null;
+        if (!requesterDoctorId.equals(encounterDoctorId)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED, "Bác sĩ chỉ được tạo chỉ định cho lần khám do mình phụ trách");
+        }
+        return encounter;
+    }
+
     private String generateCode(Encounter encounter) {
         return "SO" + encounter.getStartedAt().format(DateTimeFormatter.ofPattern("yyMMddHHmmss"))
                 + String.format("%04d", encounter.getId() % 10000);
@@ -237,6 +251,9 @@ public class ServiceOrderService {
                                                                       .queueNo(i.getQueueNo())
                                                                       .status(i.getStatus())
                                                                       .resultStatus(i.getResultStatus())
+                                                                      .cancelledAt(i.getCancelledAt())
+                                                                      .refundReason(i.getRefundReason())
+                                                                      .refundedAt(i.getRefundedAt())
                                                                       .resultTextVn(result != null ? result.getResultTextVn() : null)
                                                                       .resultTextEn(result != null ? result.getResultTextEn() : null)
                                                                       .resultDataJson(result != null ? result.getResultDataJson() : null)

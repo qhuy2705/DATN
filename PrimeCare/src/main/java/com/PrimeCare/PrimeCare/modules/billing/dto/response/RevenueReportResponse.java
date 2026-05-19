@@ -11,6 +11,7 @@ public class RevenueReportResponse {
     private Long totalRevenue;
     private Long totalRefunded;
     private Long netRevenue;
+    private Long refundsProcessed;
     private Long totalInvoices;
     private Long paidInvoices;
     private Long refundedInvoices;

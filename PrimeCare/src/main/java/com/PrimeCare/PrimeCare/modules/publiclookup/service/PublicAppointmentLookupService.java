@@ -7,6 +7,7 @@ import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentCheckInTok
 import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentStatusHistoryService;
 import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentQueueService;
 import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentSelfServiceCancellationPolicy;
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.file.service.FileStorageService;
 import com.PrimeCare.PrimeCare.modules.notification.entity.AppointmentPdfJob;
 import com.PrimeCare.PrimeCare.modules.notification.repository.AppointmentPdfJobRepository;
@@ -37,6 +38,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 
@@ -63,9 +65,16 @@ public class PublicAppointmentLookupService {
     private final com.PrimeCare.PrimeCare.modules.realtime.service.RealtimeEventPublisher realtimeEventPublisher;
     private final InternalNotificationService internalNotificationService;
     private final PasswordEncoder passwordEncoder;
+    private final AuditLogService auditLogService;
 
     @Transactional
     public PublicLookupOtpResponse requestOtp(String code) {
+        return requestOtp(code, null);
+    }
+
+    @Transactional
+    public PublicLookupOtpResponse requestOtp(String code, String channel) {
+        otpDeliveryService.assertEmailChannel(channel);
         String lookupCode = normalizeCode(code);
         Appointment appointment = resolveAppointmentForOtp(lookupCode);
         var deliveryTarget = otpDeliveryService.resolveEmail(
@@ -146,6 +155,7 @@ public class PublicAppointmentLookupService {
     }
 
     private AppointmentLookupSummaryResponse toSummary(Appointment appointment) {
+        String cancelBlockedReason = selfServiceCancellationPolicy.getBlockedReason(appointment);
         return AppointmentLookupSummaryResponse.builder()
                                                .code(appointment.getCode())
                                                .status(appointment.getStatus() != null ? appointment.getStatus().name() : "")
@@ -159,6 +169,8 @@ public class PublicAppointmentLookupService {
                                                        + (appointment.getEtaEnd() != null ? " - " + appointment.getEtaEnd() : ""))
                                                .queueNo(appointment.getQueueNo())
                                                .pdfReady(Boolean.TRUE)
+                                               .canCancel(cancelBlockedReason == null)
+                                               .cancelBlockedReason(cancelBlockedReason)
                                                .build();
     }
 
@@ -170,6 +182,7 @@ public class PublicAppointmentLookupService {
         accessTokenService.verify(token, PublicLookupType.APPOINTMENT, appointment.getId());
 
         AppointmentStatus previousStatus = appointment.getStatus();
+        Map<String, Object> before = snapshotAppointment(appointment);
         selfServiceCancellationPolicy.assertCanCancel(appointment);
         selfServiceCancellationPolicy.applyCancellation(
                 appointment,
@@ -203,6 +216,8 @@ public class PublicAppointmentLookupService {
             );
         }
         notifyStaffPatientCancelled(saved);
+
+        auditLogService.log(null, "PUBLIC_CANCEL_APPOINTMENT", "APPOINTMENT", saved.getId(), before, snapshotAppointment(saved));
 
         return com.PrimeCare.PrimeCare.modules.publiclookup.dto.response.PublicAppointmentActionResponse.builder()
                 .code(saved.getCode())
@@ -323,5 +338,22 @@ public class PublicAppointmentLookupService {
             throw new ApiException(ErrorCode.INVALID_REQUEST, "Mã tra cứu không hợp lệ");
         }
         return code.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private Map<String, Object> snapshotAppointment(Appointment appointment) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("appointmentId", appointment.getId());
+        data.put("code", appointment.getCode());
+        data.put("patientId", appointment.getPatient() != null ? appointment.getPatient().getId() : null);
+        data.put("status", appointment.getStatus() != null ? appointment.getStatus().name() : null);
+        data.put("branchId", appointment.getBranch() != null ? appointment.getBranch().getId() : null);
+        data.put("doctorId", appointment.getDoctor() != null ? appointment.getDoctor().getId() : null);
+        data.put("specialtyId", appointment.getSpecialty() != null ? appointment.getSpecialty().getId() : null);
+        data.put("visitDate", appointment.getVisitDate());
+        data.put("session", appointment.getSession() != null ? appointment.getSession().name() : null);
+        data.put("cancelledAt", appointment.getCancelledAt());
+        data.put("cancelReason", appointment.getCancelReason());
+        data.put("cancellationReasonType", appointment.getCancellationReasonType() != null ? appointment.getCancellationReasonType().name() : null);
+        return data;
     }
 }

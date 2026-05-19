@@ -57,12 +57,14 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
+import { statusDotClasses, statusTextClasses, statusToneClasses } from '@/lib/status-style-classes';
+import { getDoctorReadinessState, isDoctorBookable } from '@/lib/doctor-readiness';
 import {
   useAdminDoctorLeaves,
-  useAdminDoctorScheduleDoctorOptions,
   useAdminDoctorSchedules,
   useDeleteDoctorSchedule,
   useImportDoctorSchedules,
+  useOperationalDoctorOptions,
   useUpsertDoctorSchedule,
 } from '@/hooks/use-admin-data';
 import {
@@ -81,14 +83,14 @@ const SESSION_CONFIG: Record<
   { tone: string; dotClass: string; labelVi: string; labelEn: string }
 > = {
   MORNING: {
-    tone: 'border-sky-200 bg-sky-50 text-sky-700',
-    dotClass: 'bg-sky-500',
+    tone: statusToneClasses.info,
+    dotClass: statusDotClasses.info,
     labelVi: 'Sáng',
     labelEn: 'Morning',
   },
   AFTERNOON: {
-    tone: 'border-amber-200 bg-amber-50 text-amber-700',
-    dotClass: 'bg-amber-500',
+    tone: statusToneClasses.warning,
+    dotClass: statusDotClasses.warning,
     labelVi: 'Chiều',
     labelEn: 'Afternoon',
   },
@@ -128,7 +130,15 @@ export default function DoctorSchedulesAdminPage() {
   const monthEnd = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
   const selectedDateKey = format(selectedDate, 'yyyy-MM-dd');
 
-  const { data: doctors = [] } = useAdminDoctorScheduleDoctorOptions();
+  const {
+    data: doctorOptions = [],
+    isError: isDoctorOptionsError,
+    isLoading: isDoctorOptionsLoading,
+  } = useOperationalDoctorOptions();
+  const doctors = useMemo(
+    () => doctorOptions.filter(isDoctorBookable),
+    [doctorOptions],
+  );
 
   useEffect(() => {
     if (
@@ -146,6 +156,8 @@ export default function DoctorSchedulesAdminPage() {
   }, [currentMonth, selectedDate]);
 
   const selectedDoctor = doctors.find((doctor) => doctor.id === doctorFilter);
+  const selectedDoctorSchedulable = Boolean(selectedDoctor && isDoctorBookable(selectedDoctor));
+  const selectedDoctorReadiness = getDoctorReadinessState(selectedDoctor, isEn);
 
   const { data: schedulePage, isLoading } = useAdminDoctorSchedules(
     doctorFilter !== '__all__'
@@ -232,7 +244,7 @@ export default function DoctorSchedulesAdminPage() {
   const selectedDaySchedules = scheduleMap.get(selectedDateKey) ?? {};
 
   const saveSession = async (session: SessionKey) => {
-    if (doctorFilter === '__all__') return;
+    if (doctorFilter === '__all__' || !selectedDoctorSchedulable) return;
 
     const blockedByLeave = getLeaveForSession(
       approvedLeaves,
@@ -263,7 +275,7 @@ export default function DoctorSchedulesAdminPage() {
   };
 
   const handleImportMonth = async () => {
-    if (doctorFilter === '__all__' || !importFile) return;
+    if (doctorFilter === '__all__' || !selectedDoctorSchedulable || !importFile) return;
 
     const result = await importMutation.mutateAsync({
       doctorId: doctorFilter,
@@ -350,19 +362,19 @@ export default function DoctorSchedulesAdminPage() {
               icon={Clock3}
               label={isEn ? 'Morning sessions' : 'Ca sáng'}
               value={monthStats.morningCount}
-              tone="text-sky-600"
+              tone={statusTextClasses.info}
             />
             <MonthStatCard
               icon={Clock3}
               label={isEn ? 'Afternoon sessions' : 'Ca chiều'}
               value={monthStats.afternoonCount}
-              tone="text-amber-600"
+              tone={statusTextClasses.warning}
             />
             <MonthStatCard
               icon={ShieldCheck}
               label={isEn ? 'Leave days' : 'Ngày nghỉ duyệt'}
               value={monthStats.leaveDays}
-              tone="text-rose-600"
+              tone={statusTextClasses.success}
             />
           </div>
 
@@ -389,7 +401,7 @@ export default function DoctorSchedulesAdminPage() {
                     <DialogTrigger asChild>
                       <Button
                         variant="default"
-                        disabled={doctorFilter === '__all__'}
+                        disabled={doctorFilter === '__all__' || !selectedDoctorSchedulable}
                         className="self-start lg:self-auto"
                       >
                         <FileSpreadsheet className="mr-2 h-4 w-4" />
@@ -491,7 +503,7 @@ export default function DoctorSchedulesAdminPage() {
                         </div>
 
                         {lastImport && (
-                          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-sm text-emerald-800">
+                          <div className="rounded-2xl border border-success/20 bg-success/10 p-4 text-sm text-success">
                             <p className="font-medium">
                               {isEn
                                 ? 'Latest import result'
@@ -503,7 +515,7 @@ export default function DoctorSchedulesAdminPage() {
                                 : `Đã nhập thành công ${lastImport.importedRows}/${lastImport.totalRows} dòng.`}
                             </p>
                             {lastImport.skippedRows > 0 && (
-                              <p className="mt-1 text-amber-700">
+                              <p className="mt-1 text-warning">
                                 {isEn
                                   ? `${lastImport.skippedRows} rows were skipped.`
                                   : `${lastImport.skippedRows} dòng đã bị bỏ qua.`}
@@ -525,6 +537,7 @@ export default function DoctorSchedulesAdminPage() {
                           onClick={handleImportMonth}
                           disabled={
                             doctorFilter === '__all__' ||
+                            !selectedDoctorSchedulable ||
                             !importFile ||
                             importMutation.isPending
                           }
@@ -561,11 +574,29 @@ export default function DoctorSchedulesAdminPage() {
                         {doctors.map((doctor) => (
                           <SelectItem key={doctor.id} value={doctor.id}>
                             {doctor.fullName}
-                            {doctor.branchNameVn ? ` · ${doctor.branchNameVn}` : ''}
+                            {doctor.branchName ? ` · ${doctor.branchName}` : ''}
                           </SelectItem>
                         ))}
+                        {isDoctorOptionsError ? (
+                          <SelectItem value="__doctor_options_error__" disabled>
+                            Không tải được danh sách bác sĩ
+                          </SelectItem>
+                        ) : !isDoctorOptionsLoading && doctors.length === 0 ? (
+                          <SelectItem value="__doctor_options_empty__" disabled>
+                            Không có bác sĩ sẵn sàng vận hành phù hợp.
+                          </SelectItem>
+                        ) : null}
                       </SelectContent>
                     </Select>
+                    {isDoctorOptionsError ? (
+                      <p className="text-xs text-destructive">
+                        Không tải được danh sách bác sĩ. Vui lòng thử lại.
+                      </p>
+                    ) : !isDoctorOptionsLoading && doctors.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        Không có bác sĩ sẵn sàng vận hành phù hợp.
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -781,13 +812,25 @@ export default function DoctorSchedulesAdminPage() {
                       {selectedDoctor.fullName}
                     </p>
                     <p className="mt-1">
-                      {[selectedDoctor.displayTitleVn, selectedDoctor.branchNameVn]
+                      {[
+                        selectedDoctor.specialtyNames?.join(', '),
+                        selectedDoctor.branchName,
+                      ]
                         .filter(Boolean)
                         .join(' · ') ||
                         (isEn
-                          ? 'Ready for schedule editing'
-                          : 'Sẵn sàng chỉnh lịch')}
+                          ? 'Included in schedulable doctor options'
+                          : 'Có trong danh sách bác sĩ được xếp lịch')}
                     </p>
+                    {selectedDoctorReadiness.ready === true ? (
+                      <Badge className="mt-2 rounded-full bg-success/10 text-success">
+                        {isEn ? 'Schedulable' : 'Có thể xếp lịch'}
+                      </Badge>
+                    ) : selectedDoctorReadiness.ready === false ? (
+                      <Badge className="mt-2 rounded-full bg-warning/10 text-warning">
+                        {selectedDoctorReadiness.label}
+                      </Badge>
+                    ) : null}
                   </>
                 ) : (
                   <p>
@@ -855,11 +898,11 @@ export default function DoctorSchedulesAdminPage() {
                     </div>
 
                     {blockedLeave ? (
-                      <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-4 text-sm text-rose-700">
+                      <div className="rounded-2xl border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">
                         <div className="flex items-start gap-3">
                           <Lock className="mt-0.5 h-4 w-4" />
                           <div>
-                            <p className="font-medium text-rose-800">
+                            <p className="font-medium text-destructive">
                               {isEn
                                 ? 'This session is locked because approved leave already exists.'
                                 : 'Buổi này đang bị khóa vì đã có đơn nghỉ được duyệt.'}
@@ -926,6 +969,7 @@ export default function DoctorSchedulesAdminPage() {
                             onClick={() => saveSession(session)}
                             disabled={
                               doctorFilter === '__all__' ||
+                              !selectedDoctorSchedulable ||
                               upsertMutation.isPending
                             }
                             className="min-w-[132px]"

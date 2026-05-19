@@ -28,7 +28,7 @@ public class InventoryController {
     private final InventoryService inventoryService;
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('PHARMACIST', 'OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('PHARMACIST')")
     public ApiResponse<PageResponse<StockSummaryResponse>> listInventory(
             @RequestParam(required = false) String q,
             @PageableDefault(size = 20) Pageable pageable
@@ -40,14 +40,14 @@ public class InventoryController {
     }
 
     @PostMapping("/import")
-    @PreAuthorize("hasAnyRole('PHARMACIST', 'OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('PHARMACIST')")
     public ApiResponse<MedicationBatchResponse> importBatch(
             @Valid @RequestBody ImportBatchRequest request,
             Authentication authentication
     ) {
         Long userId = Long.valueOf(authentication.getName());
         MedicationBatch batch = inventoryService.importBatch(
-                request.getMedicationId(), request.getBatchNumber(), request.getQuantity(),
+                request.getMedicationId(), request.getBatchNumber(), request.getBatchCode(), request.getQuantity(),
                 request.getManufactureDate(), request.getExpiryDate(),
                 request.getImportPrice(), request.getSellPrice(), request.getSupplier(),
                 userId
@@ -56,16 +56,23 @@ public class InventoryController {
     }
 
     @PostMapping("/batches")
-    @PreAuthorize("hasAnyRole('PHARMACIST', 'OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('PHARMACIST')")
     public ApiResponse<MedicationBatchResponse> createBatch(
             @Valid @RequestBody ImportBatchRequest request,
             Authentication authentication
     ) {
-        return importBatch(request, authentication);
+        Long userId = Long.valueOf(authentication.getName());
+        MedicationBatch batch = inventoryService.createBatch(
+                request.getMedicationId(), request.getBatchNumber(), request.getBatchCode(), request.getQuantity(),
+                request.getManufactureDate(), request.getExpiryDate(),
+                request.getImportPrice(), request.getSellPrice(), request.getSupplier(),
+                userId
+        );
+        return ApiResponse.ok("Đã nhập kho thành công", inventoryService.toBatchResponse(batch));
     }
 
     @GetMapping("/batches")
-    @PreAuthorize("hasAnyRole('PHARMACIST', 'OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('PHARMACIST')")
     public ApiResponse<PageResponse<MedicationBatchResponse>> listBatches(
             @RequestParam(required = false) Long medicationId,
             @PageableDefault(size = 20) Pageable pageable
@@ -80,7 +87,7 @@ public class InventoryController {
     }
 
     @PutMapping("/batches/{batchId}")
-    @PreAuthorize("hasAnyRole('PHARMACIST', 'OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('PHARMACIST')")
     public ApiResponse<MedicationBatchResponse> updateBatch(
             @PathVariable Long batchId,
             @Valid @RequestBody UpdateMedicationBatchRequest request,
@@ -92,14 +99,14 @@ public class InventoryController {
     }
 
     @GetMapping("/medications/{medicationId}/batches")
-    @PreAuthorize("hasAnyRole('PHARMACIST', 'OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('PHARMACIST')")
     public ApiResponse<List<MedicationBatchResponse>> getBatches(@PathVariable Long medicationId) {
         List<MedicationBatch> batches = inventoryService.getBatches(medicationId);
         return ApiResponse.ok("OK", batches.stream().map(inventoryService::toBatchResponse).toList());
     }
 
     @GetMapping("/medications/{medicationId}/stock")
-    @PreAuthorize("hasAnyRole('PHARMACIST', 'OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('PHARMACIST')")
     public ApiResponse<StockSummaryResponse> getStock(@PathVariable Long medicationId) {
         int stock = inventoryService.getTotalStock(medicationId);
         return ApiResponse.ok("OK", StockSummaryResponse.builder()
@@ -110,7 +117,7 @@ public class InventoryController {
     }
 
     @GetMapping("/expiring")
-    @PreAuthorize("hasAnyRole('PHARMACIST', 'OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('PHARMACIST')")
     public ApiResponse<PageResponse<MedicationBatchResponse>> getExpiringBatches(
             @RequestParam(defaultValue = "30") int daysAhead,
             @PageableDefault(size = 20) Pageable pageable
@@ -125,7 +132,7 @@ public class InventoryController {
     }
 
     @PostMapping("/batches/{batchId}/adjust")
-    @PreAuthorize("hasAnyRole('PHARMACIST', 'OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('PHARMACIST')")
     public ApiResponse<MedicationBatchResponse> adjustStock(
             @PathVariable Long batchId,
             @RequestParam int newQuantity,

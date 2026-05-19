@@ -2,6 +2,7 @@ package com.PrimeCare.PrimeCare.modules.pharmacy.service;
 
 import com.PrimeCare.PrimeCare.modules.auth.entity.User;
 import com.PrimeCare.PrimeCare.modules.auth.repository.UserRepository;
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.medication.entity.InventoryTransaction;
 import com.PrimeCare.PrimeCare.modules.medication.entity.Medication;
 import com.PrimeCare.PrimeCare.modules.medication.entity.MedicationBatch;
@@ -24,7 +25,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Manages medication inventory: import, export, FIFO dispensing, stock queries.
@@ -37,6 +40,7 @@ public class InventoryService {
     private final InventoryTransactionRepository transactionRepository;
     private final MedicationRepository medicationRepository;
     private final UserRepository userRepository;
+    private final AuditLogService auditLogService;
 
     @Value("${app.pharmacy.default-low-stock-threshold:10}")
     private int defaultLowStockThreshold;
@@ -49,7 +53,67 @@ public class InventoryService {
                                        LocalDate manufactureDate, LocalDate expiryDate,
                                        Long importPrice, Long sellPrice, String supplier,
                                        Long userId) {
-        validateBatchInput(batchNumber, quantity, manufactureDate, expiryDate, importPrice, sellPrice, true, true);
+        return importBatchInternal(
+                medicationId,
+                batchNumber,
+                null,
+                quantity,
+                manufactureDate,
+                expiryDate,
+                importPrice,
+                sellPrice,
+                supplier,
+                userId,
+                "IMPORT_INVENTORY"
+        );
+    }
+
+    @Transactional
+    public MedicationBatch importBatch(Long medicationId, String batchNumber, String batchCode, Integer quantity,
+                                       LocalDate manufactureDate, LocalDate expiryDate,
+                                       Long importPrice, Long sellPrice, String supplier,
+                                       Long userId) {
+        return importBatchInternal(
+                medicationId,
+                batchNumber,
+                batchCode,
+                quantity,
+                manufactureDate,
+                expiryDate,
+                importPrice,
+                sellPrice,
+                supplier,
+                userId,
+                "IMPORT_INVENTORY"
+        );
+    }
+
+    @Transactional
+    public MedicationBatch createBatch(Long medicationId, String batchNumber, String batchCode, Integer quantity,
+                                       LocalDate manufactureDate, LocalDate expiryDate,
+                                       Long importPrice, Long sellPrice, String supplier,
+                                       Long userId) {
+        return importBatchInternal(
+                medicationId,
+                batchNumber,
+                batchCode,
+                quantity,
+                manufactureDate,
+                expiryDate,
+                importPrice,
+                sellPrice,
+                supplier,
+                userId,
+                "CREATE_MEDICATION_BATCH"
+        );
+    }
+
+    private MedicationBatch importBatchInternal(Long medicationId, String batchNumber, String batchCode, Integer quantity,
+                                                LocalDate manufactureDate, LocalDate expiryDate,
+                                                Long importPrice, Long sellPrice, String supplier,
+                                                Long userId, String auditAction) {
+        String normalizedBatchNumber = resolveBatchNumber(batchNumber, batchCode, null, true);
+        validateBatchInput(normalizedBatchNumber, quantity, manufactureDate, expiryDate, importPrice, sellPrice, true, true);
 
         Medication med = medicationRepository.findById(medicationId)
                 .orElseThrow(() -> new ApiException(ErrorCode.MEDICATION_NOT_FOUND));
@@ -59,7 +123,7 @@ public class InventoryService {
 
         MedicationBatch batch = MedicationBatch.builder()
                 .medication(med)
-                .batchNumber(batchNumber.trim())
+                .batchNumber(normalizedBatchNumber)
                 .quantityInStock(quantity)
                 .manufactureDate(manufactureDate)
                 .expiryDate(expiryDate)
@@ -75,10 +139,12 @@ public class InventoryService {
                 .batch(saved)
                 .transactionType(InventoryTransaction.TransactionType.IMPORT)
                 .quantity(quantity)
-                .reason("Nhập kho lô " + batchNumber)
+                .reason("Nhập kho lô " + normalizedBatchNumber)
                 .performedByUser(user)
                 .performedAt(LocalDateTime.now())
                 .build());
+
+        auditLogService.log(user, auditAction, "MEDICATION_BATCH", saved.getId(), null, snapshotBatch(saved));
 
         return saved;
     }
@@ -91,13 +157,19 @@ public class InventoryService {
     public int dispenseFIFO(Long medicationId, int requiredQuantity, Long prescriptionId, Long userId) {
         List<MedicationBatch> batches = batchRepository.findAvailableBatchesFIFO(medicationId);
 
+        ensureAvailableQuantity(requiredQuantity, batches);
+
         User user = userId != null ? userRepository.findById(userId).orElse(null) : null;
 
         int remaining = requiredQuantity;
         for (MedicationBatch batch : batches) {
             if (remaining <= 0) break;
+            if (!isUsableForDispense(batch)) {
+                continue;
+            }
 
             int toDeduct = Math.min(remaining, batch.getQuantityInStock());
+            Map<String, Object> before = snapshotBatch(batch);
             batch.setQuantityInStock(batch.getQuantityInStock() - toDeduct);
             batchRepository.save(batch);
 
@@ -112,6 +184,15 @@ public class InventoryService {
                     .performedAt(LocalDateTime.now())
                     .build());
 
+            auditLogService.log(user, "DISPENSE_STOCK", "MEDICATION_BATCH", batch.getId(), before, snapshotStockChange(
+                    batch,
+                    -toDeduct,
+                    "DISPENSED",
+                    "PRESCRIPTION",
+                    prescriptionId,
+                    "Phát thuốc theo đơn"
+            ));
+
             remaining -= toDeduct;
         }
 
@@ -121,6 +202,32 @@ public class InventoryService {
         }
 
         return requiredQuantity;
+    }
+
+    @Transactional
+    public void validateDispenseAvailability(Long medicationId, int requiredQuantity) {
+        ensureAvailableQuantity(requiredQuantity, batchRepository.findAvailableBatchesFIFO(medicationId));
+    }
+
+    private void ensureAvailableQuantity(int requiredQuantity, List<MedicationBatch> batches) {
+        if (requiredQuantity <= 0) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "Số lượng phát thuốc phải lớn hơn 0");
+        }
+
+        int availableQuantity = batches.stream()
+                .filter(this::isUsableForDispense)
+                .mapToInt(batch -> Math.max(0, batch.getQuantityInStock()))
+                .sum();
+        if (availableQuantity < requiredQuantity) {
+            throw new ApiException(ErrorCode.INVENTORY_INSUFFICIENT_STOCK,
+                    "Không đủ tồn kho. Cần " + requiredQuantity + " nhưng chỉ còn " + availableQuantity);
+        }
+    }
+
+    private boolean isUsableForDispense(MedicationBatch batch) {
+        return batch.getQuantityInStock() != null
+                && batch.getQuantityInStock() > 0
+                && (batch.getExpiryDate() == null || !batch.getExpiryDate().isBefore(LocalDate.now()));
     }
 
     /**
@@ -210,6 +317,7 @@ public class InventoryService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED));
 
+        Map<String, Object> before = snapshotBatch(batch);
         int diff = newQuantity - batch.getQuantityInStock();
         batch.setQuantityInStock(newQuantity);
         batchRepository.save(batch);
@@ -222,6 +330,15 @@ public class InventoryService {
                 .performedByUser(user)
                 .performedAt(LocalDateTime.now())
                 .build());
+
+        auditLogService.log(user, "ADJUST_STOCK", "MEDICATION_BATCH", batch.getId(), before, snapshotStockChange(
+                batch,
+                diff,
+                "ADJUSTMENT",
+                null,
+                null,
+                reason != null ? reason : "Điều chỉnh tồn kho"
+        ));
 
         return batch;
     }
@@ -240,7 +357,7 @@ public class InventoryService {
         Integer quantity = request.getQuantity() != null ? request.getQuantity() : batch.getQuantityInStock();
         Long importPrice = request.getImportPrice() != null ? request.getImportPrice() : batch.getImportPrice();
         Long sellPrice = request.getSellPrice() != null ? request.getSellPrice() : batch.getSellPrice();
-        String batchNumber = request.getBatchNumber() != null ? request.getBatchNumber() : batch.getBatchNumber();
+        String batchNumber = resolveBatchNumber(request.getBatchNumber(), request.getBatchCode(), batch.getBatchNumber(), false);
 
         validateBatchInput(
                 batchNumber,
@@ -256,6 +373,7 @@ public class InventoryService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED));
 
+        Map<String, Object> before = snapshotBatch(batch);
         int oldQuantity = batch.getQuantityInStock();
         batch.setBatchNumber(batchNumber.trim());
         batch.setQuantityInStock(quantity);
@@ -279,6 +397,7 @@ public class InventoryService {
                     .performedAt(LocalDateTime.now())
                     .build());
         }
+        auditLogService.log(user, "UPDATE_MEDICATION_BATCH", "MEDICATION_BATCH", saved.getId(), before, snapshotBatch(saved));
         return saved;
     }
 
@@ -349,6 +468,25 @@ public class InventoryService {
         }
     }
 
+    private String resolveBatchNumber(String batchNumber, String batchCode, String fallback, boolean required) {
+        String normalizedBatchNumber = normalize(batchNumber);
+        String normalizedBatchCode = normalize(batchCode);
+
+        if (normalizedBatchNumber != null && normalizedBatchCode != null
+                && !normalizedBatchNumber.equals(normalizedBatchCode)) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "batchNumber và batchCode không được khác nhau");
+        }
+
+        String resolved = normalizedBatchNumber != null ? normalizedBatchNumber : normalizedBatchCode;
+        if (resolved == null) {
+            resolved = normalize(fallback);
+        }
+        if (required && resolved == null) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "Số lô không được để trống");
+        }
+        return resolved;
+    }
+
     private int effectiveLowStockThreshold() {
         return Math.max(0, defaultLowStockThreshold);
     }
@@ -384,5 +522,36 @@ public class InventoryService {
 
     private String normalize(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private Map<String, Object> snapshotBatch(MedicationBatch batch) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("batchId", batch.getId());
+        data.put("medicationId", batch.getMedication() != null ? batch.getMedication().getId() : null);
+        data.put("batchNumber", batch.getBatchNumber());
+        data.put("quantityInStock", batch.getQuantityInStock());
+        data.put("manufactureDate", batch.getManufactureDate());
+        data.put("expiryDate", batch.getExpiryDate());
+        data.put("importPrice", batch.getImportPrice());
+        data.put("sellPrice", batch.getSellPrice());
+        data.put("supplier", batch.getSupplier());
+        return data;
+    }
+
+    private Map<String, Object> snapshotStockChange(
+            MedicationBatch batch,
+            int quantityDelta,
+            String transactionType,
+            String referenceType,
+            Long referenceId,
+            String reason
+    ) {
+        Map<String, Object> data = snapshotBatch(batch);
+        data.put("quantityDelta", quantityDelta);
+        data.put("transactionType", transactionType);
+        data.put("referenceType", referenceType);
+        data.put("referenceId", referenceId);
+        data.put("reason", reason);
+        return data;
     }
 }

@@ -4,12 +4,14 @@ import { ArrowLeft } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { EncounterPrescriptionsPanel } from '@/components/doctor/EncounterPrescriptionsPanel';
+import { useDoctorEncounter } from '@/hooks/use-doctor-data';
 
 export default function PrescriptionsPage() {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const encounterId = searchParams.get('encounterId') || '';
+  const { data: encounter } = useDoctorEncounter(encounterId);
 
   if (!encounterId) {
     return (
@@ -24,6 +26,15 @@ export default function PrescriptionsPage() {
       </div>
     );
   }
+
+  const canEdit = encounter?.status !== 'COMPLETED' && encounter?.status !== 'CANCELLED';
+  const canCreatePrescription = Boolean(encounter?.canCreatePrescription && canEdit);
+  const createBlockedReason =
+    encounter?.canCreatePrescription === false && (encounter.issuedPrescriptionCount ?? 0) > 0
+      ? 'Lần khám đã có đơn thuốc đang hiệu lực.'
+      : encounter?.canCreatePrescription === false
+        ? 'Không thể tạo đơn thuốc mới cho lần khám này.'
+        : undefined;
 
   return (
     <div className="space-y-6">
@@ -43,8 +54,9 @@ export default function PrescriptionsPage() {
       />
       <EncounterPrescriptionsPanel
         encounterId={encounterId}
-        canCreatePrescription
-        canEdit
+        canCreatePrescription={canCreatePrescription}
+        canEdit={Boolean(canEdit)}
+        createBlockedReason={createBlockedReason}
       />
     </div>
   );

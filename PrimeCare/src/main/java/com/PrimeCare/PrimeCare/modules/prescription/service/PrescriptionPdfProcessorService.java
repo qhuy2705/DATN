@@ -61,7 +61,7 @@ public class PrescriptionPdfProcessorService {
                     InternalNotificationService.SEVERITY_CRITICAL,
                     "Tạo PDF đơn thuốc thất bại",
                     "Tạo PDF đơn thuốc thất bại cho job " + jobId + ".",
-                    "/app/admin/notifications",
+                    "/app/admin/dashboard",
                     "PRESCRIPTION",
                     prescriptionId,
                     Map.of("jobId", jobId, "error", e.getMessage() != null ? e.getMessage() : "")

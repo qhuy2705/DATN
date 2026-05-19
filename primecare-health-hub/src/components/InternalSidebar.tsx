@@ -2,7 +2,8 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Calendar, Users, Building2, Stethoscope, Pill, Boxes,
   UserCog, ClipboardList, Receipt, Clock, CalendarOff,
-  Activity, ShieldCheck, FlaskConical, FileSearch, UserRound, BellRing,
+  Activity, ShieldCheck, FlaskConical,
+  PhoneCall, ShieldAlert, Gauge,
 } from 'lucide-react';
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
@@ -48,6 +49,7 @@ const menuGroups: MenuGroup[] = [
       { titleKey: 'sidebar.doctorSchedules', url: '/app/admin/doctor-schedules', icon: Clock, roles: ROUTE_ROLES.doctorSchedulesAdmin },
       { titleKey: 'sidebar.doctorLeaves', url: '/app/admin/doctor-leaves', icon: CalendarOff, roles: ROUTE_ROLES.doctorLeavesAdmin },
       { titleKey: 'sidebar.auditLogs', url: '/app/admin/audit-logs', icon: ShieldCheck, roles: ROUTE_ROLES.auditLogs },
+      { titleKey: 'sidebar.rateLimits', url: '/app/admin/rate-limits', icon: Gauge, roles: ROUTE_ROLES.rateLimits },
     ],
   },
   {
@@ -55,6 +57,8 @@ const menuGroups: MenuGroup[] = [
     items: [
       { titleKey: 'sidebar.appointmentMgmt', url: '/app/appointments', icon: Calendar, roles: ROUTE_ROLES.appointments },
       { titleKey: 'sidebar.receptionQueue', url: '/app/reception/queue', icon: Users, roles: ROUTE_ROLES.receptionQueue },
+      { titleKey: 'Cần xử lý sau lịch', url: '/app/appointment-follow-ups', icon: PhoneCall, roles: ROUTE_ROLES.appointmentFollowUps },
+      { titleKey: 'Hạn chế đặt lịch', url: '/app/booking-restrictions', icon: ShieldAlert, roles: ROUTE_ROLES.bookingRestrictions },
       { titleKey: 'sidebar.walkIn', url: '/app/reception/walk-in', icon: ClipboardList, roles: ROUTE_ROLES.walkIn },
       { titleKey: 'sidebar.serviceDesk', url: '/app/service-desk/results', icon: FlaskConical, roles: ROUTE_ROLES.serviceDesk },
     ],
@@ -65,16 +69,6 @@ const menuGroups: MenuGroup[] = [
       { titleKey: 'sidebar.myAppointments', url: '/app/doctor/appointments', icon: Calendar, roles: ROUTE_ROLES.doctor },
       { titleKey: 'sidebar.mySchedule', url: '/app/doctor/schedules', icon: Clock, roles: ROUTE_ROLES.doctor },
       { titleKey: 'sidebar.leaveRequests', url: '/app/doctor/leave-requests', icon: CalendarOff, roles: ROUTE_ROLES.doctor },
-    ],
-  },
-  {
-    labelKey: 'sidebar.patientSection',
-    items: [
-      { titleKey: 'sidebar.patientOverview', url: '/app/patient/overview', icon: UserRound, roles: ROUTE_ROLES.patientPortal },
-      { titleKey: 'sidebar.patientAppointments', url: '/app/patient/appointments', icon: Calendar, roles: ROUTE_ROLES.patientPortal },
-      { titleKey: 'sidebar.patientResults', url: '/app/patient/results', icon: FileSearch, roles: ROUTE_ROLES.patientPortal },
-      { titleKey: 'sidebar.patientInvoices', url: '/app/patient/invoices', icon: Receipt, roles: ROUTE_ROLES.patientPortal },
-      { titleKey: 'sidebar.patientPreferences', url: '/app/patient/preferences', icon: BellRing, roles: ROUTE_ROLES.patientPortal },
     ],
   },
   {

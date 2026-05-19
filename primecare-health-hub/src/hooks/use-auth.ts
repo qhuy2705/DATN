@@ -40,7 +40,7 @@ function resolvePostLoginTarget(role: AppRole, fallbackPath?: string) {
     if (fallbackPath && fallbackPath !== '/login' && fallbackPath !== '/register') {
       return fallbackPath;
     }
-    return '/';
+    return DEFAULT_ROLE_HOME.PATIENT;
   }
   return DEFAULT_ROLE_HOME[role] || '/app/dashboard';
 }

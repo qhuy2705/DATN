@@ -1,5 +1,6 @@
 package com.PrimeCare.PrimeCare.modules.masterdata.branch.service;
 
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.masterdata.branch.dto.request.CreateBranchRequest;
 import com.PrimeCare.PrimeCare.modules.masterdata.branch.dto.request.UpdateBranchRequest;
 import com.PrimeCare.PrimeCare.modules.masterdata.branch.dto.request.UpdateBranchStatusRequest;
@@ -20,12 +21,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 public class BranchService {
 
     private final BranchRepository branchRepository;
+    private final AuditLogService auditLogService;
 
     @Transactional
     public BranchResponse create(CreateBranchRequest req) {
@@ -51,6 +55,7 @@ public class BranchService {
                 .build();
 
         b = branchRepository.save(b);
+        auditLogService.log(null, "CREATE_BRANCH", "BRANCH", b.getId(), null, snapshotBranch(b));
         return BranchMapper.toResponse(b);
     }
 
@@ -58,6 +63,7 @@ public class BranchService {
     public BranchResponse update(Long id, UpdateBranchRequest req) {
         Branch b = branchRepository.findById(id)
                 .orElseThrow(() -> new ApiException(ErrorCode.BRANCH_NOT_FOUND));
+        Map<String, Object> before = snapshotBranch(b);
 
         b.setNameVn(req.getNameVn().trim());
         b.setNameEn(req.getNameEn().trim());
@@ -71,6 +77,7 @@ public class BranchService {
         b.setDescriptionEn(StringUtil.trimToNull(req.getDescriptionEn()));
 
         b = branchRepository.save(b);
+        auditLogService.log(null, "UPDATE_BRANCH", "BRANCH", b.getId(), before, snapshotBranch(b));
         return BranchMapper.toResponse(b);
     }
 
@@ -78,9 +85,11 @@ public class BranchService {
     public BranchResponse updateStatus(Long id, UpdateBranchStatusRequest req) {
         Branch b = branchRepository.findById(id)
                 .orElseThrow(() -> new ApiException(ErrorCode.BRANCH_NOT_FOUND));
+        Map<String, Object> before = snapshotBranch(b);
 
         b.setStatus(req.getStatus());
         b = branchRepository.save(b);
+        auditLogService.log(null, "UPDATE_BRANCH_STATUS", "BRANCH", b.getId(), before, snapshotBranch(b));
         return BranchMapper.toResponse(b);
     }
 
@@ -150,5 +159,15 @@ public class BranchService {
 
     private BigDecimal toBigDecimal(Double v) {
         return v == null ? null : BigDecimal.valueOf(v);
+    }
+
+    private Map<String, Object> snapshotBranch(Branch branch) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("id", branch.getId());
+        data.put("code", branch.getCode());
+        data.put("nameVn", branch.getNameVn());
+        data.put("nameEn", branch.getNameEn());
+        data.put("status", branch.getStatus() != null ? branch.getStatus().name() : null);
+        return data;
     }
 }

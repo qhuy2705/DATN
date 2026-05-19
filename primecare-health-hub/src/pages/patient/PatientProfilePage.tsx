@@ -33,6 +33,28 @@ const PROFILE_TABS = [
   { value: 'security', label: 'Bảo mật', icon: Shield },
 ] as const;
 
+const SMS_NOT_CONFIGURED_MESSAGE = 'SMS chưa được cấu hình trong môi trường hiện tại.';
+const APPOINTMENT_REMINDER_EMAIL_MESSAGE =
+  'PrimeCare sẽ gửi email nhắc lịch khi lịch khám được xác nhận và còn đủ xa thời điểm khám.';
+
+const notificationPreferenceRows = [
+  { field: 'allowEmail', label: 'Cho phép nhận email' },
+  {
+    field: 'allowSms',
+    label: 'Cho phép nhận SMS',
+    description: `${SMS_NOT_CONFIGURED_MESSAGE} Nhắc lịch hẹn hiện được gửi qua email.`,
+    disabled: true,
+  },
+  {
+    field: 'appointmentReminders',
+    label: 'Nhắc lịch hẹn qua email',
+    description: APPOINTMENT_REMINDER_EMAIL_MESSAGE,
+  },
+  { field: 'resultReadyAlerts', label: 'Thông báo có kết quả' },
+  { field: 'invoiceUpdates', label: 'Cập nhật hóa đơn' },
+  { field: 'securityAlerts', label: 'Cảnh báo bảo mật' },
+] as const;
+
 export default function PatientProfilePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || 'personal';
@@ -97,6 +119,7 @@ export default function PatientProfilePage() {
   const updateField = (patch: Record<string, unknown>) => {
     updateNotificationMutation.mutate({ ...(notificationsQuery.data || {}), ...patch });
   };
+  const preferredNotificationChannel = notificationsQuery.data?.preferredChannel ?? 'EMAIL';
 
   return (
     <div className="space-y-6">
@@ -275,21 +298,19 @@ export default function PatientProfilePage() {
                     </div>
                   </div>
 
-                  {[
-                    ['allowEmail', 'Cho phép nhận email'],
-                    ['allowSms', 'Cho phép nhận SMS'],
-                    ['appointmentReminders', 'Nhắc lịch hẹn'],
-                    ['resultReadyAlerts', 'Thông báo có kết quả'],
-                    ['invoiceUpdates', 'Cập nhật hóa đơn'],
-                    ['securityAlerts', 'Cảnh báo bảo mật'],
-                  ].map(([field, label]) => (
-                    <div key={field} className="flex items-center justify-between rounded-2xl border p-4">
-                      <Label htmlFor={field} className="text-sm font-medium">{label}</Label>
+                  {notificationPreferenceRows.map((row) => (
+                    <div key={row.field} className="flex items-center justify-between gap-4 rounded-2xl border p-4">
+                      <div className="space-y-1">
+                        <Label htmlFor={row.field} className="text-sm font-medium">{row.label}</Label>
+                        {'description' in row && (
+                          <p className="text-xs leading-5 text-muted-foreground">{row.description}</p>
+                        )}
+                      </div>
                       <Switch
-                        id={field}
-                        checked={Boolean((notificationsQuery.data as Record<string, unknown> | undefined)?.[field])}
-                        onCheckedChange={(checked) => updateField({ [field]: checked })}
-                        disabled={updateNotificationMutation.isPending}
+                        id={row.field}
+                        checked={Boolean((notificationsQuery.data as Record<string, unknown> | undefined)?.[row.field])}
+                        onCheckedChange={(checked) => updateField({ [row.field]: checked })}
+                        disabled={updateNotificationMutation.isPending || ('disabled' in row && row.disabled)}
                       />
                     </div>
                   ))}
@@ -298,13 +319,14 @@ export default function PatientProfilePage() {
                     <Label className="text-sm font-medium">Kênh ưu tiên</Label>
                     <select
                       className="mt-2 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={notificationsQuery.data?.preferredChannel || 'SMS'}
+                      value={preferredNotificationChannel}
                       onChange={(e) => updateField({ preferredChannel: e.target.value })}
                       disabled={updateNotificationMutation.isPending}
                     >
-                      <option value="SMS">SMS</option>
                       <option value="EMAIL">Email</option>
+                      <option value="SMS" disabled>SMS - chưa cấu hình</option>
                     </select>
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">Nhắc lịch hẹn hiện được gửi qua email.</p>
                   </div>
                 </>
               )}
@@ -351,7 +373,7 @@ export default function PatientProfilePage() {
               <CardContent className="space-y-4 text-sm text-muted-foreground">
                 <div className="rounded-2xl border bg-muted/30 p-4">
                   <p className="font-medium text-foreground">Giữ thông tin liên lạc luôn đúng</p>
-                  <p className="mt-1">PrimeCare sẽ dùng email hoặc số điện thoại hiện tại để gửi cảnh báo đăng nhập, nhắc lịch và thông báo kết quả.</p>
+                  <p className="mt-1">PrimeCare sẽ dùng email hiện tại để gửi nhắc lịch; số điện thoại giúp xác minh liên lạc khi cần.</p>
                 </div>
                 <div className="rounded-2xl border bg-muted/30 p-4">
                   <p className="font-medium text-foreground">Mật khẩu mạnh</p>

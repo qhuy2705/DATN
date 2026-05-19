@@ -1,7 +1,7 @@
 package com.PrimeCare.PrimeCare.modules.billing.dto.query;
 
 public interface CashierInvoiceSummaryRow {
-    long getInvoiceCount();
+    long getInvoicesCreatedInRange();
 
     long getUnpaidInvoiceCount();
 
@@ -9,9 +9,29 @@ public interface CashierInvoiceSummaryRow {
 
     long getPaymentReviewInvoiceCount();
 
-    long getPaidInvoiceCount();
+    long getPaidInvoicesInRange();
 
     long getRefundedInvoiceCount();
 
-    long getPaidRevenue();
+    long getGrossPaidRevenueInRange();
+
+    long getRefundedAmountForPaidInvoicesInRange();
+
+    long getNetPaidRevenueInRange();
+
+    long getPaidRevenueInRange();
+
+    long getRefundsProcessedInRange();
+
+    default long getInvoiceCount() {
+        return getInvoicesCreatedInRange();
+    }
+
+    default long getPaidInvoiceCount() {
+        return getPaidInvoicesInRange();
+    }
+
+    default long getPaidRevenue() {
+        return getPaidRevenueInRange();
+    }
 }

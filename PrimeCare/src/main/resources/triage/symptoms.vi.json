@@ -1,0 +1,40 @@
+{
+  "version": "2026.05.01",
+  "items": [
+    {
+      "code": "SORE_THROAT",
+      "label": "Đau họng",
+      "synonyms": ["đau họng", "rát họng", "viêm họng"],
+      "weight": 10,
+      "priorityHint": "ROUTINE"
+    },
+    {
+      "code": "COUGH",
+      "label": "Ho",
+      "synonyms": ["ho", "ho khan", "ho có đờm"],
+      "weight": 10,
+      "priorityHint": "ROUTINE"
+    },
+    {
+      "code": "ABDOMINAL_PAIN",
+      "label": "Đau bụng",
+      "synonyms": ["đau bụng", "đau vùng bụng", "quặn bụng"],
+      "weight": 15,
+      "priorityHint": "ROUTINE"
+    },
+    {
+      "code": "FATIGUE",
+      "label": "Mệt mỏi",
+      "synonyms": ["mệt", "mệt mỏi", "mệt nhiều", "đuối sức"],
+      "weight": 15,
+      "priorityHint": "ROUTINE"
+    },
+    {
+      "code": "DIZZINESS",
+      "label": "Chóng mặt",
+      "synonyms": ["chóng mặt", "hoa mắt", "choáng váng"],
+      "weight": 15,
+      "priorityHint": "ROUTINE"
+    }
+  ]
+}

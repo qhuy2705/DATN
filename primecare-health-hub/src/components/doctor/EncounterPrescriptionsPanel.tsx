@@ -8,11 +8,18 @@ import {
 } from '@/hooks/use-doctor-data';
 import type { Prescription } from '@/types/api';
 import { PrescriptionEditorDialog } from './PrescriptionEditorDialog';
+import {
+  getRefundReason,
+  getRefundedAt,
+  isRefundedOrCancelledItem,
+  MEDICATION_REFUNDED_LABEL,
+} from '@/lib/refund-status';
 
 interface EncounterPrescriptionsPanelProps {
   encounterId: string;
   canCreatePrescription: boolean;
   canEdit: boolean;
+  createBlockedReason?: string;
 }
 
 function formatIssuedDate(value?: string) {
@@ -25,13 +32,14 @@ function canEditPrescription(prescription: Prescription) {
 }
 
 function canCancelPrescription(prescription: Prescription) {
-  return prescription.status !== 'CANCELLED' && prescription.status !== 'DISPENSED';
+  return prescription.status === 'DRAFT' || prescription.status === 'ISSUED';
 }
 
 export function EncounterPrescriptionsPanel({
   encounterId,
   canCreatePrescription,
   canEdit,
+  createBlockedReason,
 }: EncounterPrescriptionsPanelProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editItem, setEditItem] = useState<Prescription | null>(null);
@@ -74,6 +82,9 @@ export function EncounterPrescriptionsPanel({
   };
 
   const createDisabled = !canEdit || !canCreatePrescription;
+  const disabledReason = !canEdit
+    ? 'Không thể tạo đơn thuốc mới cho lần khám này.'
+    : createBlockedReason || 'Không thể tạo đơn thuốc mới cho lần khám này.';
 
   return (
     <div className="rounded-xl border bg-card p-4">
@@ -94,7 +105,7 @@ export function EncounterPrescriptionsPanel({
 
       {createDisabled && (
         <p className="mb-4 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-          Chưa thể kê đơn thuốc trong trạng thái hiện tại của hồ sơ.
+          {disabledReason}
         </p>
       )}
 
@@ -161,9 +172,16 @@ export function EncounterPrescriptionsPanel({
                         key={item.id || `${prescription.id}-preview-${index}`}
                         className="flex items-center justify-between gap-2 rounded-md bg-muted/20 px-3 py-2 text-sm"
                       >
-                        <span className="min-w-0 truncate font-medium text-foreground">
-                          {item.medicationName}
-                        </span>
+                        <div className="min-w-0">
+                          <span className="block truncate font-medium text-foreground">
+                            {item.medicationName}
+                          </span>
+                          {isRefundedOrCancelledItem(item) ? (
+                            <span className="mt-1 inline-flex rounded-full border border-muted-foreground/20 bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                              {MEDICATION_REFUNDED_LABEL}
+                            </span>
+                          ) : null}
+                        </div>
                         <span className="shrink-0 text-xs text-muted-foreground">
                           {item.quantity ?? 0} {item.unit || 'đơn vị'}
                         </span>
@@ -200,33 +218,52 @@ export function EncounterPrescriptionsPanel({
                       </p>
                     ) : null}
 
-                    {prescription.items.map((item, index) => (
-                      <div
-                        key={item.id || `${prescription.id}-${index}`}
-                        className="rounded-md border bg-muted/10 px-3 py-3"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div>
-                            <p className="font-medium text-foreground">{item.medicationName}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {[item.strength, item.dosageForm].filter(Boolean).join(' · ') || 'Thông tin thuốc'}
-                            </p>
+                    {prescription.items.map((item, index) => {
+                      const refunded = isRefundedOrCancelledItem(item);
+                      const refundReason = getRefundReason(item);
+                      const refundedAt = getRefundedAt(item);
+                      return (
+                        <div
+                          key={item.id || `${prescription.id}-${index}`}
+                          className="rounded-md border bg-muted/10 px-3 py-3"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-medium text-foreground">{item.medicationName}</p>
+                                {refunded ? (
+                                  <span className="rounded-full border border-muted-foreground/20 bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                    {MEDICATION_REFUNDED_LABEL}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                {[item.strength, item.dosageForm].filter(Boolean).join(' · ') || 'Thông tin thuốc'}
+                              </p>
+                              {refunded && (refundReason || refundedAt) ? (
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {[refundReason, refundedAt ? `Lúc ${new Date(refundedAt).toLocaleString('vi-VN')}` : '']
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </p>
+                              ) : null}
+                            </div>
+                            <span className="rounded-full bg-background px-2.5 py-1 text-xs text-muted-foreground">
+                              {item.quantity ?? 0} {item.unit || 'đơn vị'}
+                            </span>
                           </div>
-                          <span className="rounded-full bg-background px-2.5 py-1 text-xs text-muted-foreground">
-                            {item.quantity ?? 0} {item.unit || 'đơn vị'}
-                          </span>
+                          <div className="mt-2 grid gap-2 text-sm text-muted-foreground md:grid-cols-2">
+                            <span>Liều: {item.dose || '—'}</span>
+                            <span>Tần suất: {item.frequency || '—'}</span>
+                            <span>Số ngày: {item.durationDays ?? '—'}</span>
+                            <span>Đường dùng: {item.route || '—'}</span>
+                          </div>
+                          {item.instruction ? (
+                            <p className="mt-2 text-sm text-foreground">{item.instruction}</p>
+                          ) : null}
                         </div>
-                        <div className="mt-2 grid gap-2 text-sm text-muted-foreground md:grid-cols-2">
-                          <span>Liều: {item.dose || '—'}</span>
-                          <span>Tần suất: {item.frequency || '—'}</span>
-                          <span>Số ngày: {item.durationDays ?? '—'}</span>
-                          <span>Đường dùng: {item.route || '—'}</span>
-                        </div>
-                        {item.instruction ? (
-                          <p className="mt-2 text-sm text-foreground">{item.instruction}</p>
-                        ) : null}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>

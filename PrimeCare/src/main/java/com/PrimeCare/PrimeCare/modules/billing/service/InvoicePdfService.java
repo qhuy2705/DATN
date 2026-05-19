@@ -4,6 +4,7 @@ import com.PrimeCare.PrimeCare.modules.billing.entity.Invoice;
 import com.PrimeCare.PrimeCare.modules.billing.entity.InvoiceItem;
 import com.PrimeCare.PrimeCare.modules.encounter.entity.Encounter;
 import com.PrimeCare.PrimeCare.modules.patient.entity.Patient;
+import com.PrimeCare.PrimeCare.modules.prescription.entity.Prescription;
 import com.PrimeCare.PrimeCare.modules.service_order.entity.ServiceOrder;
 import com.PrimeCare.PrimeCare.modules.service_order.entity.ServiceOrderItem;
 import com.PrimeCare.PrimeCare.shared.enums.PaymentMethod;
@@ -44,7 +45,10 @@ public class InvoicePdfService {
             document.open();
 
             ServiceOrder serviceOrder = invoice.getServiceOrder();
-            Encounter encounter = serviceOrder != null ? serviceOrder.getEncounter() : null;
+            Prescription prescription = invoice.getPrescription();
+            Encounter encounter = serviceOrder != null
+                    ? serviceOrder.getEncounter()
+                    : (prescription != null ? prescription.getEncounter() : null);
             Patient patient = encounter != null ? encounter.getPatient() : null;
 
             PdfLayout.addHeader(document, buildHeader(invoice, serviceOrder, encounter), shouldShowHeaderQr(invoice, qrPng) ? qrPng : null);
@@ -93,7 +97,7 @@ public class InvoicePdfService {
     }
 
     private String resolveTitle(Invoice invoice) {
-        if (invoice.getPaymentStatus() == PaymentStatus.PAID) {
+        if (isFinanciallyPaid(invoice)) {
             return "Biên lai thu tiền";
         }
         return "Phiếu thanh toán viện phí";
@@ -113,6 +117,7 @@ public class InvoicePdfService {
         PdfTableBuilder.addKeyValue(table, "Tuyến khám", "Không áp dụng");
         PdfTableBuilder.addKeyValue(table, "Mã lượt khám", encounter != null ? encounter.getCode() : null);
         PdfTableBuilder.addKeyValue(table, "Mã chỉ định", invoice.getServiceOrder() != null ? invoice.getServiceOrder().getCode() : null);
+        PdfTableBuilder.addKeyValue(table, "Mã đơn thuốc", invoice.getPrescription() != null ? invoice.getPrescription().getCode() : null);
 
         PdfPCell diagnosis = PdfTableBuilder.cell("Chẩn đoán lâm sàng: "
                 + PdfFormatters.safeText(resolveDiagnosis(encounter)), PdfTheme.BODY);
@@ -199,7 +204,7 @@ public class InvoicePdfService {
                                          String accountNo,
                                          String accountName,
                                          String transferContent) throws Exception {
-        boolean showGuide = invoice.getPaymentStatus() != PaymentStatus.PAID
+        boolean showGuide = !isFinanciallyPaid(invoice)
                 && qrPng != null
                 && qrPng.length > 0;
         boolean showReconciliation = invoice.getPaymentMethod() == PaymentMethod.BANK_TRANSFER
@@ -284,9 +289,14 @@ public class InvoicePdfService {
 
     private boolean shouldShowHeaderQr(Invoice invoice, byte[] qrPng) {
         return qrPng != null && qrPng.length > 0
-                && (invoice.getPaymentStatus() != PaymentStatus.PAID
+                && (!isFinanciallyPaid(invoice)
                 || invoice.getPaymentMethod() == PaymentMethod.BANK_TRANSFER
                 || invoice.getPaymentMethod() == PaymentMethod.VNPAY);
+    }
+
+    private boolean isFinanciallyPaid(Invoice invoice) {
+        return invoice.getPaymentStatus() == PaymentStatus.PAID
+                || invoice.getPaymentStatus() == PaymentStatus.PARTIALLY_REFUNDED;
     }
 
     private List<LineItem> resolveLineItems(Invoice invoice, ServiceOrder serviceOrder) {

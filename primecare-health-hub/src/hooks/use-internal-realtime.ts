@@ -228,10 +228,18 @@ function getNotificationDomain(
 }
 
 function appointmentInvalidationKeys(role: AppRole, appointmentId?: string): QueryKey[] {
-  if (canSubscribe(role, ['STAFF', 'OPERATIONS_ADMIN', 'SYSTEM_ADMIN'])) {
+  if (role === 'STAFF') {
     return [
       ['reception', 'queue'],
       ['reception', 'queue', 'summary'],
+      ['admin', 'appointments'],
+      ['admin', 'appointments', 'summary'],
+      ...(appointmentId ? ([['admin', 'appointments', 'detail', appointmentId]] as QueryKey[]) : []),
+    ];
+  }
+
+  if (role === 'OPERATIONS_ADMIN') {
+    return [
       ['admin', 'appointments'],
       ['admin', 'appointments', 'summary'],
       ...(appointmentId ? ([['admin', 'appointments', 'detail', appointmentId]] as QueryKey[]) : []),
@@ -256,7 +264,7 @@ function receptionInvalidationKeys(): QueryKey[] {
 }
 
 function cashierInvalidationKeys(role: AppRole): QueryKey[] {
-  if (!canSubscribe(role, ['CASHIER', 'OPERATIONS_ADMIN', 'SYSTEM_ADMIN'])) return [];
+  if (role !== 'CASHIER') return [];
   return [
     ['cashier', 'summary'],
     ['cashier', 'service-orders'],
@@ -266,7 +274,7 @@ function cashierInvalidationKeys(role: AppRole): QueryKey[] {
 }
 
 function serviceDeskInvalidationKeys(role: AppRole): QueryKey[] {
-  if (!canSubscribe(role, ['SERVICE_TECHNICIAN', 'OPERATIONS_ADMIN', 'SYSTEM_ADMIN'])) return [];
+  if (role !== 'SERVICE_TECHNICIAN') return [];
   return [
     ['service-desk', 'queue'],
     ['service-desk', 'summary'],
@@ -274,7 +282,7 @@ function serviceDeskInvalidationKeys(role: AppRole): QueryKey[] {
 }
 
 function pharmacyInvalidationKeys(role: AppRole): QueryKey[] {
-  if (!canSubscribe(role, ['PHARMACIST', 'OPERATIONS_ADMIN'])) return [];
+  if (role !== 'PHARMACIST') return [];
   return [
     ['pharmacist-prescriptions'],
     ['pharmacy-inventory'],
@@ -490,15 +498,9 @@ export function useInternalRealtime() {
         }
       }
 
-      if (canSubscribe(user.role, ['OPERATIONS_ADMIN', 'SYSTEM_ADMIN'])) {
+      if (user.role === 'OPERATIONS_ADMIN') {
         subscribe('/topic/appointments/summary', () => {
           scheduleMany(appointmentInvalidationKeys(user.role));
-        });
-        subscribe('/topic/service-desk/updates', () => {
-          scheduleMany(serviceDeskInvalidationKeys(user.role));
-        });
-        subscribe('/topic/cashier/orders', () => {
-          scheduleMany(cashierInvalidationKeys(user.role));
         });
       }
     };

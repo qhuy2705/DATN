@@ -20,7 +20,7 @@ public class PharmacyController {
     private final PrescriptionService prescriptionService;
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('PHARMACIST', 'OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('PHARMACIST')")
     public ApiResponse<PageResponse<PrescriptionResponse>> getPendingPrescriptions(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) PrescriptionStatus status,
@@ -38,7 +38,7 @@ public class PharmacyController {
     }
 
     @PostMapping("/{id}/dispense")
-    @PreAuthorize("hasAnyRole('PHARMACIST', 'OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('PHARMACIST')")
     public ApiResponse<PrescriptionResponse> dispensePrescription(
             @PathVariable Long id,
             Authentication authentication

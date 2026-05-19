@@ -8,6 +8,7 @@ import java.time.LocalDate;
 @Data
 public class UpdateMedicationBatchRequest {
     private String batchNumber;
+    private String batchCode;
 
     @Min(value = 0, message = "Số lượng không được âm")
     private Integer quantity;

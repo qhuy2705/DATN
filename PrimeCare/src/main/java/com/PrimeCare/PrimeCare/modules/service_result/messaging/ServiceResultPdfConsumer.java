@@ -73,7 +73,7 @@ public class ServiceResultPdfConsumer {
                     InternalNotificationService.SEVERITY_CRITICAL,
                     "Tạo PDF kết quả thất bại",
                     "Tạo PDF kết quả cận lâm sàng thất bại cho result " + result.getId() + ".",
-                    "/app/admin/notifications",
+                    "/app/admin/dashboard",
                     "SERVICE_RESULT",
                     result.getId(),
                     Map.of("serviceResultId", result.getId(), "error", ex.getMessage() != null ? ex.getMessage() : "")

@@ -21,6 +21,7 @@ const paymentStatuses = [
   'PENDING_CONFIRMATION',
   'PAYMENT_REVIEW',
   'PAID',
+  'PARTIALLY_REFUNDED',
   'REFUNDED',
   'VOID',
 ] satisfies PaymentStatus[];
@@ -39,7 +40,8 @@ describe('status contract helpers', () => {
     expect(appointmentStatuses).not.toContain('PENDING');
     expect(appointmentStatuses).not.toContain('IN_PROGRESS');
 
-    const options = buildAppointmentStatusOptions((key: string) => key);
+    const t = ((key: string) => key) as Parameters<typeof buildAppointmentStatusOptions>[0];
+    const options = buildAppointmentStatusOptions(t);
     const optionValues = options.map((option) => option.value);
     expect(optionValues).toHaveLength(appointmentStatuses.length);
     expect(optionValues).toEqual(expect.arrayContaining(appointmentStatuses));
@@ -59,6 +61,7 @@ describe('status contract helpers', () => {
     expect(getPaymentStatusLabel('PENDING_CONFIRMATION')).toBe('Chờ xác nhận');
     expect(getPaymentStatusLabel('PAYMENT_REVIEW')).toBe('Cần kiểm tra');
     expect(getPaymentStatusLabel('PAID')).toBe('Đã thanh toán');
+    expect(getPaymentStatusLabel('PARTIALLY_REFUNDED')).toBe('Hoàn một phần');
     expect(getPaymentStatusLabel('REFUNDED')).toBe('Đã hoàn tiền');
     expect(getPaymentStatusLabel('VOID')).toBe('Đã hủy');
   });

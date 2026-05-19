@@ -4,7 +4,9 @@ import com.PrimeCare.PrimeCare.modules.appointment.config.AppointmentProperties;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AppointmentAvailabilityResponse;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.BookableSlotResponse;
 import com.PrimeCare.PrimeCare.modules.appointment.entity.Appointment;
+import com.PrimeCare.PrimeCare.modules.appointment.entity.AppointmentSlotHold;
 import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentRepository;
+import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentSlotHoldRepository;
 import com.PrimeCare.PrimeCare.modules.doctor_leave.repository.DoctorLeaveRequestRepository;
 import com.PrimeCare.PrimeCare.modules.doctor_schedule.entity.DoctorWorkSchedule;
 import com.PrimeCare.PrimeCare.modules.doctor_schedule.repository.DoctorWorkScheduleRepository;
@@ -19,11 +21,14 @@ import com.PrimeCare.PrimeCare.modules.masterdata.specialty.entity.BranchSpecial
 import com.PrimeCare.PrimeCare.modules.masterdata.specialty.entity.Specialty;
 import com.PrimeCare.PrimeCare.modules.masterdata.specialty.service.BranchSpecialtyService;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentStatus;
+import com.PrimeCare.PrimeCare.shared.enums.AppointmentSlotHoldStatus;
 import com.PrimeCare.PrimeCare.shared.enums.BranchSessionType;
 import com.PrimeCare.PrimeCare.shared.enums.BranchSpecialtyStatus;
 import com.PrimeCare.PrimeCare.shared.enums.BranchStatus;
 import com.PrimeCare.PrimeCare.shared.enums.DoctorLeaveRequestStatus;
 import com.PrimeCare.PrimeCare.shared.enums.DoctorStatus;
+import com.PrimeCare.PrimeCare.shared.exception.ApiException;
+import com.PrimeCare.PrimeCare.shared.exception.ErrorCode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -33,14 +38,19 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -61,6 +71,8 @@ class AppointmentAvailabilityServiceTest {
     private DoctorLeaveRequestRepository doctorLeaveRequestRepository;
     @Mock
     private AppointmentRepository appointmentRepository;
+    @Mock
+    private AppointmentSlotHoldRepository appointmentSlotHoldRepository;
     @Mock
     private BranchSpecialtyService branchSpecialtyService;
     @Mock
@@ -184,6 +196,71 @@ class AppointmentAvailabilityServiceTest {
     }
 
     @Test
+    void heldSlotHoldConsumesTheSingleDoctorSlot() {
+        LocalDate visitDate = LocalDate.now().plusDays(1);
+        AppointmentSlotHold hold = AppointmentSlotHold.builder()
+                .status(AppointmentSlotHoldStatus.HELD)
+                .visitDate(visitDate)
+                .session(SESSION)
+                .slotStart(LocalTime.of(8, 0))
+                .slotEnd(LocalTime.of(8, 30))
+                .expiresAt(LocalDateTime.now().plusHours(12))
+                .build();
+        stubAvailabilityContext(visitDate, List.of(), List.of(hold));
+
+        AppointmentAvailabilityResponse response = service.getAvailability(
+                BRANCH_ID,
+                SPECIALTY_ID,
+                DOCTOR_ID,
+                visitDate,
+                SESSION
+        );
+
+        BookableSlotResponse slot = slotAt(response, LocalTime.of(8, 0));
+        assertThat(slot.isAvailable()).isFalse();
+        assertThat(slot.getRemainingSlots()).isZero();
+        assertThat(slot.getBookedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void publicAvailabilityRejectsNonBookableDoctorWithPublicSafeMessage() {
+        LocalDate visitDate = LocalDate.now().plusDays(1);
+        Branch branch = Branch.builder()
+                              .id(BRANCH_ID)
+                              .nameVn("PrimeCare Q1")
+                              .status(BranchStatus.ACTIVE)
+                              .build();
+        Specialty specialty = Specialty.builder()
+                                       .id(SPECIALTY_ID)
+                                       .nameVn("Noi tong quat")
+                                       .status("ACTIVE")
+                                       .build();
+        DoctorProfile doctor = DoctorProfile.builder()
+                                            .id(DOCTOR_ID)
+                                            .fullName("BS. Nguyen Van A")
+                                            .branch(branch)
+                                            .status(DoctorStatus.ACTIVE)
+                                            .build();
+        BranchSpecialty branchSpecialty = BranchSpecialty.builder()
+                                                         .branch(branch)
+                                                         .specialty(specialty)
+                                                         .status(BranchSpecialtyStatus.ACTIVE)
+                                                         .build();
+        when(branchSpecialtyService.getActiveBranchSpecialtyEntity(BRANCH_ID, SPECIALTY_ID)).thenReturn(branchSpecialty);
+        when(doctorProfileRepository.findByIdAndBranch_Id(DOCTOR_ID, BRANCH_ID)).thenReturn(Optional.of(doctor));
+        doThrow(new ApiException(ErrorCode.INVALID_REQUEST, DoctorOperationalGuardService.PUBLIC_DOCTOR_NOT_AVAILABLE_MESSAGE))
+                .when(doctorOperationalGuardService).assertDoctorPublicBookable(doctor);
+
+        assertThatThrownBy(() -> service.getAvailability(BRANCH_ID, SPECIALTY_ID, DOCTOR_ID, visitDate, SESSION))
+                .isInstanceOfSatisfying(ApiException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_REQUEST);
+                    assertThat(ex.getMessage()).isEqualTo(DoctorOperationalGuardService.PUBLIC_DOCTOR_NOT_AVAILABLE_MESSAGE);
+                });
+
+        verify(branchSessionRepository, never()).findByBranch_IdAndSessionAndStatus(any(), any(), any());
+    }
+
+    @Test
     void appointmentPropertiesClampDefaultSlotCapacityToAtLeastOne() {
         AppointmentProperties properties = new AppointmentProperties();
 
@@ -198,6 +275,14 @@ class AppointmentAvailabilityServiceTest {
     }
 
     private void stubAvailabilityContext(LocalDate visitDate, List<Appointment> storedAppointments) {
+        stubAvailabilityContext(visitDate, storedAppointments, List.of());
+    }
+
+    private void stubAvailabilityContext(
+            LocalDate visitDate,
+            List<Appointment> storedAppointments,
+            List<AppointmentSlotHold> activeHolds
+    ) {
         Branch branch = Branch.builder()
                               .id(BRANCH_ID)
                               .nameVn("PrimeCare Q1")
@@ -264,6 +349,13 @@ class AppointmentAvailabilityServiceTest {
                                      .filter(appointment -> statuses.contains(appointment.getStatus()))
                                      .toList();
         });
+        when(appointmentSlotHoldRepository.findActiveByDoctorAndDateRange(
+                eq(DOCTOR_ID),
+                eq(visitDate),
+                eq(visitDate),
+                any(),
+                any()
+        )).thenReturn(activeHolds);
     }
 
     private Appointment appointment(AppointmentStatus status, LocalTime etaStart) {

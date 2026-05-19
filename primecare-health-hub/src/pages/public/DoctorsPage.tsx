@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from 'react-i18next';
+import { isPublicDoctorBookable } from '@/lib/doctor-readiness';
 
 export default function DoctorsPage() {
   const { i18n } = useTranslation();
@@ -54,7 +55,10 @@ export default function DoctorsPage() {
   );
 
   const { data: doctorPage, isLoading } = useDoctors(doctorParams);
-  const doctors = doctorPage?.items ?? [];
+  const doctors = useMemo(
+    () => (doctorPage?.items ?? []).filter(isPublicDoctorBookable),
+    [doctorPage?.items],
+  );
   const meta = doctorPage?.meta;
   const totalItems = meta?.totalItems ?? 0;
 

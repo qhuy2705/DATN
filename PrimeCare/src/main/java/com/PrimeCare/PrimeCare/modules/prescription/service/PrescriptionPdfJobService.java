@@ -38,6 +38,8 @@ public class PrescriptionPdfJobService {
         User requestedBy = userRepository.findById(requestedByUserId)
                                          .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED));
 
+        validateDoctorOwnership(prescription, requestedBy);
+
         PrescriptionPdfJob job = PrescriptionPdfJob.builder()
                                                    .prescriptionId(prescription.getId())
                                                    .requestedBy(requestedBy)
@@ -69,7 +71,7 @@ public class PrescriptionPdfJobService {
                                                              .orElseThrow(() -> new ApiException(ErrorCode.INVALID_REQUEST, "Không tìm thấy job tạo PDF"));
 
         if (job.getRequestedBy() == null || !job.getRequestedBy().getId().equals(requestedByUserId)) {
-            throw new ApiException(ErrorCode.UNAUTHORIZED);
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
 
         return job;
@@ -84,5 +86,18 @@ public class PrescriptionPdfJobService {
         }
 
         return fileStorageService.downloadAsBytes(job.getFilePath());
+    }
+
+    private void validateDoctorOwnership(Prescription prescription, User requestedBy) {
+        Long requestedDoctorProfileId = requestedBy.getDoctorProfile() != null
+                ? requestedBy.getDoctorProfile().getId()
+                : null;
+        Long ownerDoctorProfileId = prescription.getEncounter() != null && prescription.getEncounter().getDoctor() != null
+                ? prescription.getEncounter().getDoctor().getId()
+                : null;
+
+        if (requestedDoctorProfileId == null || ownerDoctorProfileId == null || !requestedDoctorProfileId.equals(ownerDoctorProfileId)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED, "Bạn không thuộc bác sĩ phụ trách đơn thuốc này");
+        }
     }
 }

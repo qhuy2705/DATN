@@ -7,9 +7,11 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -19,6 +21,19 @@ public interface PrescriptionRepository extends JpaRepository<Prescription, Long
     @EntityGraph(attributePaths = {"encounter", "doctorUser", "items", "items.medication"})
     @Query("select p from Prescription p where p.id = :id")
     Optional<Prescription> findWithDetailsById(@Param("id") Long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @EntityGraph(attributePaths = {
+            "encounter",
+            "encounter.patient",
+            "encounter.doctor",
+            "encounter.branch",
+            "doctorUser",
+            "items",
+            "items.medication"
+    })
+    @Query("select p from Prescription p where p.id = :id")
+    Optional<Prescription> findWithLockDetailsById(@Param("id") Long id);
 
     @EntityGraph(attributePaths = {"encounter", "items", "items.medication", "doctorUser"})
     Page<Prescription> findByEncounter_IdOrderByCreatedAtDesc(Long encounterId, Pageable pageable);

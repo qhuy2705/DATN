@@ -84,10 +84,10 @@ export default function SpecialtiesAdminPage() {
     setEditItem(item);
     setForm({
       code: item.code ?? '',
-      nameVn: item.name ?? '',
-      nameEn: item.name ?? '',
-      descriptionVn: item.description ?? '',
-      descriptionEn: item.description ?? '',
+      nameVn: item.nameVn ?? '',
+      nameEn: item.nameEn ?? '',
+      descriptionVn: item.descriptionVn ?? '',
+      descriptionEn: item.descriptionEn ?? '',
       iconUrl: item.iconUrl ?? '',
       defaultSlotMinutes: String(item.defaultSlotMinutes ?? 15),
       maxPerSession: String(item.maxPerSession ?? 0),

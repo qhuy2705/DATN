@@ -22,7 +22,9 @@ import {
   useCreateEncounterFromAppointment,
   useDoctorAppointmentSummary,
   useDoctorAppointments,
+  useDoctorWaitingAppointments,
 } from '@/hooks/use-doctor-data';
+import { formatTriagePriority, getPreTriageLevelClass, getPreTriageLevelDisplay, getPriorityClass } from '@/lib/triage';
 
 type ClinicalFilterStatus =
   | '__all__'
@@ -133,8 +135,17 @@ export default function DoctorAppointmentsPage() {
     }),
     [selectedDate],
   );
+  const waitingParams = useMemo(
+    () => ({
+      visitDate: selectedDate,
+      page: '0',
+      size: '50',
+    }),
+    [selectedDate],
+  );
 
   const { data, isLoading, isError, isFetching, refetch } = useDoctorAppointments(queryParams);
+  const waitingQuery = useDoctorWaitingAppointments(waitingParams, activeStatus === 'WAITING_EXAM');
   const summaryQuery = useDoctorAppointmentSummary(queryParams);
   const startEncounter = useCreateEncounterFromAppointment();
 
@@ -175,9 +186,16 @@ export default function DoctorAppointmentsPage() {
     : fallbackStats;
 
   const filteredAppointments = useMemo(() => {
+    if (activeStatus === 'WAITING_EXAM' && waitingQuery.data) {
+      return waitingQuery.data.items;
+    }
     if (activeStatus === '__all__') return appointments;
     return appointments.filter((apt) => getWorklistBucket(apt) === activeStatus);
-  }, [activeStatus, appointments]);
+  }, [activeStatus, appointments, waitingQuery.data]);
+  const listIsLoading =
+    activeStatus === 'WAITING_EXAM' ? waitingQuery.isLoading && !waitingQuery.data : isLoading;
+  const listIsError = activeStatus === 'WAITING_EXAM' ? waitingQuery.isError : isError;
+  const listRefetch = activeStatus === 'WAITING_EXAM' ? waitingQuery.refetch : refetch;
 
   const handlePrimaryAction = async (apt: Appointment) => {
     if (apt.activeEncounterId) {
@@ -237,11 +255,20 @@ export default function DoctorAppointmentsPage() {
             variant="outline"
             onClick={() => {
               void refetch();
+              if (activeStatus === 'WAITING_EXAM') void waitingQuery.refetch();
               void summaryQuery.refetch();
             }}
-            disabled={isFetching || summaryQuery.isFetching}
+            disabled={isFetching || (activeStatus === 'WAITING_EXAM' && waitingQuery.isFetching) || summaryQuery.isFetching}
           >
-            <RefreshCw className={cn('mr-2 h-4 w-4', (isFetching || summaryQuery.isFetching) && 'animate-spin')} />
+            <RefreshCw
+              className={cn(
+                'mr-2 h-4 w-4',
+                (isFetching ||
+                  (activeStatus === 'WAITING_EXAM' && waitingQuery.isFetching) ||
+                  summaryQuery.isFetching) &&
+                  'animate-spin',
+              )}
+            />
             Làm mới
           </Button>
         </div>
@@ -270,7 +297,7 @@ export default function DoctorAppointmentsPage() {
       </div>
 
       {hasMoreAppointments ? (
-        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="flex items-start gap-3 rounded-xl border border-warning/20 bg-warning/10 px-4 py-3 text-sm text-warning">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
             Đang hiển thị 50 lượt đầu tiên trong tổng {totalAppointments} lượt của ngày này.
@@ -280,13 +307,13 @@ export default function DoctorAppointmentsPage() {
       ) : null}
 
       <div className="grid gap-3">
-        {isError ? (
+        {listIsError ? (
           <ErrorState
             title="Không tải được lịch khám"
             description="Vui lòng thử lại hoặc kiểm tra quyền truy cập lịch khám của bác sĩ."
-            onRetry={() => void refetch()}
+            onRetry={() => void listRefetch()}
           />
-        ) : isLoading ? (
+        ) : listIsLoading ? (
           <LoadingSkeleton variant="list" count={6} />
         ) : filteredAppointments.length > 0 ? (
           filteredAppointments.map((apt) => {
@@ -329,9 +356,34 @@ export default function DoctorAppointmentsPage() {
                     {apt.patientNote && (
                       <p className="text-xs italic text-muted-foreground">"{apt.patientNote}"</p>
                     )}
+                    {activeStatus === 'WAITING_EXAM' && apt.triageNote ? (
+                      <p className="text-xs text-muted-foreground">Ưu tiên: {apt.triageNote}</p>
+                    ) : activeStatus === 'WAITING_EXAM' && apt.preTriageSummary ? (
+                      <p className="text-xs text-muted-foreground">Sàng lọc sơ bộ: {apt.preTriageSummary}</p>
+                    ) : null}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 md:justify-end">
+                  {apt.triagePriority ? (
+                    <span
+                      className={cn(
+                        'inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium leading-none',
+                        getPriorityClass(apt.triagePriority),
+                      )}
+                    >
+                      {formatTriagePriority(apt.triagePriority)}
+                    </span>
+                  ) : null}
+                  {activeStatus === 'WAITING_EXAM' && apt.preTriageLevel === 'RED_FLAG' ? (
+                    <span
+                      className={cn(
+                        'inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium leading-none',
+                        getPreTriageLevelClass(apt.preTriageLevel),
+                      )}
+                    >
+                      {getPreTriageLevelDisplay(apt.preTriageLevel)}
+                    </span>
+                  ) : null}
                   <StatusBadge status={apt.status} />
                   {apt.activeEncounterStatus && <StatusBadge status={apt.activeEncounterStatus} />}
                   {(canStart || hasEncounter) && (

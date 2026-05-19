@@ -2,6 +2,7 @@ package com.PrimeCare.PrimeCare.modules.appointment.dto.request;
 
 import com.PrimeCare.PrimeCare.shared.enums.BranchSessionType;
 import com.PrimeCare.PrimeCare.shared.enums.Gender;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.FutureOrPresent;
 import jakarta.validation.constraints.NotBlank;
@@ -47,6 +48,7 @@ public class CreateAppointmentRequest {
     )
     private String patientPhone;
 
+    @NotBlank(message = "Vui lòng nhập email để nhận mã OTP tra cứu/hủy lịch.")
     @Size(max = 255, message = "Email tối đa 255 ký tự")
     @Email(message = "Email không đúng định dạng")
     private String patientEmail;
@@ -64,4 +66,10 @@ public class CreateAppointmentRequest {
 
     @Size(max = 32, message = "Loại lượt khám tối đa 32 ký tự")
     private String visitType;
+
+    @Size(max = 256, message = "Token xác thực email đặt lịch không hợp lệ")
+    private String bookingEmailVerificationToken;
+
+    @Valid
+    private PreTriageInputRequest preTriage;
 }

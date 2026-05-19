@@ -1,13 +1,61 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import apiClient from '@/lib/api-client';
-import { normalizeAppointment, normalizePatient, unwrapApiData, unwrapPage } from '@/lib/api-adapters';
+import {
+  normalizeAppointment,
+  normalizeFollowUpQueueItem,
+  normalizePatient,
+  unwrapApiData,
+  unwrapPage,
+} from '@/lib/api-adapters';
 import { getApiErrorMessage } from '@/lib/error-utils';
-import type { Appointment, Patient, ReceptionQueueSummary, WalkInFormRequest } from '@/types/api';
+import type {
+  Appointment,
+  FollowUpQueueItem,
+  Patient,
+  ReceptionQueueSummary,
+  WalkInFormRequest,
+} from '@/types/api';
 import { toast } from 'sonner';
+
+const DOCTOR_OPERATION_NOT_READY_CODES = new Set([
+  'DOCTOR_NOT_READY',
+  'DOCTOR_NOT_BOOKABLE',
+  'DOCTOR_NOT_OPERATIONAL_READY',
+  'DOCTOR_NOT_OPERATIONALLY_READY',
+  'DOCTOR_ACCOUNT_MISSING',
+  'DOCTOR_ACCOUNT_INACTIVE',
+  'DOCTOR_ACCOUNT_BLOCKED',
+]);
+
+function getApiErrorCode(error: unknown) {
+  const code = (error as { response?: { data?: { code?: unknown; errorCode?: unknown } } })
+    .response?.data;
+  const value = code?.code ?? code?.errorCode;
+  return typeof value === 'string' ? value : undefined;
+}
+
+function isDoctorOperationNotReadyError(error: unknown) {
+  const code = getApiErrorCode(error);
+  if (code && DOCTOR_OPERATION_NOT_READY_CODES.has(code)) return true;
+
+  const message = getApiErrorMessage(error, '').toLowerCase();
+  return (
+    (message.includes('doctor') || message.includes('bác sĩ') || message.includes('bac si')) &&
+    (message.includes('ready') ||
+      message.includes('sẵn sàng') ||
+      message.includes('san sang') ||
+      message.includes('bookable') ||
+      message.includes('operational') ||
+      message.includes('account') ||
+      message.includes('tài khoản') ||
+      message.includes('tai khoan'))
+  );
+}
 
 export const receptionQueryKeys = {
   queue: (params?: Record<string, string>) => ['reception', 'queue', params] as const,
   queueSummary: (params?: Record<string, string>) => ['reception', 'queue', 'summary', params] as const,
+  followUpQueue: (params?: Record<string, string>) => ['reception', 'follow-up', params] as const,
   patientSearch: (q: string) => ['reception', 'patients', 'search', q] as const,
 };
 
@@ -28,6 +76,16 @@ function normalizeReceptionQueueSummary(raw: unknown): ReceptionQueueSummary {
   const hasOverdue = item.overdueCount != null || item.overdue != null;
   const hasNoShowFollowUp =
     item.noShowFollowUpPending != null || item.noShowFollowUpPendingCount != null;
+  const hasDoctorCancellationNoResponse =
+    item.doctorCancellationNoResponse != null ||
+    item.doctorCancellationNoResponseCount != null ||
+    item.doctorCancellationNoResponsePending != null;
+  const hasDoctorCancellationContactRequested =
+    item.doctorCancellationContactRequested != null ||
+    item.doctorCancellationContactRequestedCount != null ||
+    item.doctorCancellationContactRequestedPending != null;
+  const hasFollowUpPending =
+    item.followUpPending != null || item.followUpPendingCount != null || item.followUpTotal != null;
 
   return {
     total: readNumber('total', 'all', 'totalItems'),
@@ -41,6 +99,23 @@ function normalizeReceptionQueueSummary(raw: unknown): ReceptionQueueSummary {
     overdueCount: hasOverdue ? readNumber('overdueCount', 'overdue') : undefined,
     noShowFollowUpPending: hasNoShowFollowUp
       ? readNumber('noShowFollowUpPending', 'noShowFollowUpPendingCount')
+      : undefined,
+    doctorCancellationNoResponse: hasDoctorCancellationNoResponse
+      ? readNumber(
+          'doctorCancellationNoResponse',
+          'doctorCancellationNoResponseCount',
+          'doctorCancellationNoResponsePending',
+        )
+      : undefined,
+    doctorCancellationContactRequested: hasDoctorCancellationContactRequested
+      ? readNumber(
+          'doctorCancellationContactRequested',
+          'doctorCancellationContactRequestedCount',
+          'doctorCancellationContactRequestedPending',
+        )
+      : undefined,
+    followUpPending: hasFollowUpPending
+      ? readNumber('followUpPending', 'followUpPendingCount', 'followUpTotal')
       : undefined,
   };
 }
@@ -68,6 +143,32 @@ export function useReceptionQueueSummary(params?: Record<string, string>) {
     queryFn: async () => {
       const { data } = await apiClient.get('/reception/appointments/queue/summary', { params });
       return normalizeReceptionQueueSummary(unwrapApiData(data));
+    },
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+export function useFollowUpQueue(params?: Record<string, string>) {
+  return useQuery({
+    queryKey: receptionQueryKeys.followUpQueue(params),
+    queryFn: async () => {
+      const { data } = await apiClient.get('/reception/follow-up/queue', { params });
+      const payload = unwrapApiData<unknown>(data);
+      const page = unwrapPage<unknown>(data);
+      const directItems =
+        payload && typeof payload === 'object' && !Array.isArray(payload)
+          ? (payload as Record<string, unknown>).followUps ??
+            (payload as Record<string, unknown>).cases ??
+            (payload as Record<string, unknown>).queue
+          : undefined;
+      return {
+        ...page,
+        items: (Array.isArray(directItems) ? directItems : page.items).map(
+          normalizeFollowUpQueueItem,
+        ) as FollowUpQueueItem[],
+      };
     },
     staleTime: 15_000,
     refetchOnWindowFocus: false,
@@ -139,27 +240,12 @@ export function useCreateWalkIn() {
       qc.invalidateQueries({ queryKey: ['admin', 'appointments', 'summary'] });
       toast.success('Tạo lượt khám walk-in thành công');
     },
-    onError: (error) => toast.error(getApiErrorMessage(error, 'Tạo lượt khám walk-in thất bại')),
-  });
-}
-
-export function useMarkArrived() {
-  const qc = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (appointmentId: string) => {
-      const { data } = await apiClient.post(`/reception/appointments/${appointmentId}/arrive`);
-      return normalizeAppointment(unwrapApiData(data));
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['reception', 'queue'] });
-      qc.invalidateQueries({ queryKey: ['reception', 'queue', 'summary'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'appointments'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'appointments', 'detail'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'appointments', 'summary'] });
-      toast.success('Đã đánh dấu bệnh nhân đã đến');
-    },
-    onError: (error) => toast.error(getApiErrorMessage(error, 'Đánh dấu đến thất bại')),
+    onError: (error) =>
+      toast.error(
+        isDoctorOperationNotReadyError(error)
+          ? 'Bác sĩ chưa sẵn sàng vận hành vì chưa có tài khoản hoạt động.'
+          : getApiErrorMessage(error, 'Tạo lượt khám walk-in thất bại'),
+      ),
   });
 }
 
@@ -182,5 +268,25 @@ export function useManualCheckIn() {
       toast.success('Check-in thủ công thành công');
     },
     onError: (error) => toast.error(getApiErrorMessage(error, 'Check-in thủ công thất bại')),
+  });
+}
+
+export function useQrCheckIn() {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (body: { qrToken: string }) => {
+      const { data } = await apiClient.post('/reception/appointments/check-in/qr', body);
+      return normalizeAppointment(unwrapApiData(data));
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['reception', 'queue'] });
+      qc.invalidateQueries({ queryKey: ['reception', 'queue', 'summary'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'appointments'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'appointments', 'detail'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'appointments', 'summary'] });
+      toast.success('Check-in QR thành công');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Mã QR check-in không hợp lệ.')),
   });
 }

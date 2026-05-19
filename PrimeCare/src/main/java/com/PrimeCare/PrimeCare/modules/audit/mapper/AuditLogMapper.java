@@ -11,8 +11,12 @@ public class AuditLogMapper {
     public AuditLogResponse toResponse(AuditLog log) {
         return AuditLogResponse.builder()
                                .id(log.getId())
+                               .eventId(log.getEventId())
                                .actorId(log.getActor() != null ? log.getActor().getId() : null)
-                               .actorName(resolveActorName(log.getActor()))
+                               .actorName(log.getActorName() != null ? log.getActorName() : resolveActorName(log.getActor()))
+                               .actorEmail(log.getActorEmail() != null
+                                       ? log.getActorEmail()
+                                       : log.getActor() != null ? log.getActor().getEmail() : null)
                                .actorRole(log.getActorRole())
                                .action(log.getAction())
                                .entity(log.getEntity())

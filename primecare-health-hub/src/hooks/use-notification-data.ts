@@ -30,7 +30,12 @@ export function normalizeInternalNotification(raw: unknown): InternalNotificatio
         : typeof item.body === 'string' && item.body.trim()
           ? item.body
           : 'Có cập nhật mới trong hệ thống.',
-    route: typeof item.route === 'string' && item.route.trim() ? item.route : undefined,
+    route:
+      typeof item.route === 'string' && item.route.trim()
+        ? item.route
+        : typeof item.actionUrl === 'string' && item.actionUrl.trim()
+          ? item.actionUrl
+          : undefined,
     entityType:
       typeof item.entityType === 'string' && item.entityType.trim()
         ? item.entityType

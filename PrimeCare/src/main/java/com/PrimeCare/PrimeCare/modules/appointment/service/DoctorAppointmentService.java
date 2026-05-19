@@ -11,6 +11,9 @@ import com.PrimeCare.PrimeCare.modules.encounter.dto.record.EncounterWorkflowSta
 import com.PrimeCare.PrimeCare.modules.encounter.entity.Encounter;
 import com.PrimeCare.PrimeCare.modules.encounter.repository.EncounterRepository;
 import com.PrimeCare.PrimeCare.modules.encounter.service.EncounterWorkflowService;
+import com.PrimeCare.PrimeCare.modules.triage.TriageJsonSupport;
+import com.PrimeCare.PrimeCare.modules.triage.TriageMatchedRule;
+import com.PrimeCare.PrimeCare.modules.triage.TriageMatchedTerm;
 import com.PrimeCare.PrimeCare.shared.common.PageResponse;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentStatus;
 import com.PrimeCare.PrimeCare.shared.exception.ApiException;
@@ -55,6 +58,30 @@ public class DoctorAppointmentService {
                 pageable
         );
 
+        PageResponse<AppointmentAdminResponse> response = toPageResponse(page, pageable);
+
+        log.info("doctor appointments durationMs={} doctorId={} from={} to={} size={}",
+                (System.nanoTime() - started) / 1_000_000L,
+                user.getDoctorProfile().getId(),
+                from,
+                to,
+                page.getNumberOfElements());
+
+        return response;
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<AppointmentAdminResponse> myWaitingAppointments(Long userId, LocalDate visitDate, Pageable pageable) {
+        User user = resolveDoctorUser(userId);
+        Page<Appointment> page = appointmentRepository.findDoctorWaitingQueue(
+                user.getDoctorProfile().getId(),
+                visitDate,
+                pageable
+        );
+        return toPageResponse(page, pageable);
+    }
+
+    private PageResponse<AppointmentAdminResponse> toPageResponse(Page<Appointment> page, Pageable pageable) {
         List<Long> appointmentIds = page.getContent().stream().map(Appointment::getId).toList();
         Map<Long, Encounter> encounterByAppointmentId = appointmentIds.isEmpty()
                 ? Map.of()
@@ -77,13 +104,6 @@ public class DoctorAppointmentService {
                         workflowStateByEncounterId
                 ))
                 .toList();
-
-        log.info("doctor appointments durationMs={} doctorId={} from={} to={} size={}",
-                (System.nanoTime() - started) / 1_000_000L,
-                user.getDoctorProfile().getId(),
-                from,
-                to,
-                page.getNumberOfElements());
 
         return PageResponse.<AppointmentAdminResponse>builder()
                 .items(items)
@@ -166,7 +186,38 @@ public class DoctorAppointmentService {
                 .patientFullName(entity.getPatientFullName())
                 .patientPhone(entity.getPatientPhone())
                 .patientEmail(entity.getPatientEmail())
+                .reasonForVisit(entity.getReasonForVisit())
+                .visitType(entity.getVisitType())
+                .triagePriority(entity.getTriagePriority())
+                .triageNote(entity.getTriageNote())
+                .triageReviewStatus(entity.getTriageReviewStatus())
+                .triageReviewedAt(entity.getTriageReviewedAt())
+                .triageReviewedByName(entity.getTriageReviewedBy() != null ? resolveUserDisplayName(entity.getTriageReviewedBy()) : null)
+                .triageOverrideReason(entity.getTriageOverrideReason())
+                .preTriageLevel(entity.getPreTriageLevel())
+                .preTriagePriority(entity.getPreTriagePriority())
+                .preTriageFlags(TriageJsonSupport.readStringList(entity.getPreTriageFlagsJson()))
+                .preTriageReasons(TriageJsonSupport.readStringList(entity.getPreTriageReasonsJson()))
+                .preTriageSummary(entity.getPreTriageSummary())
+                .preTriageAssessedAt(entity.getPreTriageAssessedAt())
+                .symptomOnset(entity.getSymptomOnset())
+                .chronicConditions(TriageJsonSupport.readStringList(entity.getChronicConditionsJson()))
+                .chronicConditionOthers(TriageJsonSupport.readStringList(entity.getChronicConditionOthersJson()))
+                .functionalImpact(entity.getFunctionalImpact())
+                .redFlagSelections(TriageJsonSupport.readStringList(entity.getRedFlagSelectionsJson()))
+                .preTriageMatchedTerms(TriageJsonSupport.readObjectList(entity.getPreTriageMatchedTermsJson(), TriageMatchedTerm.class))
+                .preTriageMatchedRules(TriageJsonSupport.readObjectList(entity.getPreTriageMatchedRulesJson(), TriageMatchedRule.class))
+                .preTriageSource(entity.getPreTriageSource())
+                .preTriageConfidenceLevel(entity.getPreTriageConfidenceLevel())
+                .preTriageKnowledgeBaseVersion(entity.getPreTriageKnowledgeBaseVersion())
+                .preTriageRulesetVersion(entity.getPreTriageRulesetVersion())
+                .preTriageAiModelVersion(entity.getPreTriageAiModelVersion())
+                .arrivalStatus(entity.getArrivalStatus())
+                .receptionQueueNo(entity.getReceptionQueueNo())
+                .arrivedAt(entity.getArrivedAt())
                 .checkedInAt(entity.getCheckedInAt())
+                .checkedInLate(Boolean.TRUE.equals(entity.getCheckedInLate()))
+                .lateMinutes(entity.getLateMinutes() != null ? entity.getLateMinutes() : 0)
                 .followUpPending(Boolean.TRUE.equals(entity.getFollowUpPending()))
                 .activeEncounterId(activeEncounter != null ? activeEncounter.getId() : null)
                 .activeEncounterCode(activeEncounter != null ? activeEncounter.getCode() : null)
@@ -182,6 +233,16 @@ public class DoctorAppointmentService {
                 .canCreatePrescription(workflowState.canCreatePrescription())
                 .canComplete(workflowState.canComplete())
                 .build();
+    }
+
+    private String resolveUserDisplayName(User user) {
+        if (user.getStaffProfile() != null && user.getStaffProfile().getFullName() != null) {
+            return user.getStaffProfile().getFullName();
+        }
+        if (user.getDoctorProfile() != null && user.getDoctorProfile().getFullName() != null) {
+            return user.getDoctorProfile().getFullName();
+        }
+        return user.getEmail();
     }
 
     private User resolveDoctorUser(Long userId) {

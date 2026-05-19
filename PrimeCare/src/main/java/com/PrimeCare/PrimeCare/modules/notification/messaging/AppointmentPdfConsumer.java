@@ -96,7 +96,7 @@ public class AppointmentPdfConsumer {
                     InternalNotificationService.SEVERITY_CRITICAL,
                     "Tạo PDF phiếu hẹn thất bại",
                     "Tạo PDF cho lịch hẹn " + appointment.getCode() + " thất bại.",
-                    "/app/admin/notifications",
+                    "/app/admin/dashboard",
                     "APPOINTMENT",
                     appointment.getId(),
                     java.util.Map.of("appointmentCode", appointment.getCode(), "error", ex.getMessage() != null ? ex.getMessage() : "")

@@ -52,6 +52,12 @@ public class PublicResultLookupService {
 
     @Transactional
     public PublicLookupOtpResponse requestOtp(String code) {
+        return requestOtp(code, null);
+    }
+
+    @Transactional
+    public PublicLookupOtpResponse requestOtp(String code, String channel) {
+        otpDeliveryService.assertEmailChannel(channel);
         String lookupCode = normalizeCode(code);
         Encounter encounter = resolveEncounterReadyForPublicLookup(lookupCode);
         Appointment appointment = encounter.getAppointment();

@@ -29,8 +29,8 @@ const PHARMACY_EXPIRING_QUERY_KEY = ['pharmacy-expiring-batches'] as const;
 
 function cleanCreateBatchPayload(payload: CreateBatchRequest): CreateBatchRequest {
   return {
-    medicationId: payload.medicationId,
-    batchCode: payload.batchCode,
+    medicationId: payload.medicationId.trim(),
+    batchNumber: payload.batchNumber.trim(),
     quantity: payload.quantity,
     expiryDate: payload.expiryDate,
     ...(payload.status?.trim() ? { status: payload.status.trim() } : {}),
@@ -40,7 +40,7 @@ function cleanCreateBatchPayload(payload: CreateBatchRequest): CreateBatchReques
 function cleanUpdateBatchPayload(payload: UpdateBatchRequest): UpdateBatchRequest {
   return {
     ...(payload.medicationId?.trim() ? { medicationId: payload.medicationId.trim() } : {}),
-    ...(payload.batchCode?.trim() ? { batchCode: payload.batchCode.trim() } : {}),
+    ...(payload.batchNumber?.trim() ? { batchNumber: payload.batchNumber.trim() } : {}),
     ...(typeof payload.quantity === 'number' ? { quantity: payload.quantity } : {}),
     ...(payload.expiryDate?.trim() ? { expiryDate: payload.expiryDate.trim() } : {}),
     ...(payload.status?.trim() ? { status: payload.status.trim() } : {}),
@@ -168,9 +168,20 @@ export function useDispensePrescription() {
       const { data } = await apiClient.post<ApiResponse<Prescription>>(`/pharmacy/prescriptions/${id}/dispense`);
       return normalizePrescription(unwrapApiData(data)) as Prescription;
     },
-    onSuccess: () => {
+    onSuccess: (updatedPrescription) => {
       toast.success('Phát thuốc thành công');
+      qc.setQueriesData<PageResponse<Prescription>>({ queryKey: ['pharmacist-prescriptions'] }, (previous) => {
+        if (!previous) return previous;
+
+        return {
+          ...previous,
+          items: previous.items.map((item) =>
+            item.id === updatedPrescription.id ? updatedPrescription : item,
+          ),
+        };
+      });
       qc.invalidateQueries({ queryKey: ['pharmacist-prescriptions'] });
+      invalidatePharmacyInventory(qc);
     },
     onError: (e) => {
       toast.error(getApiErrorMessage(e, 'Không thể phát thuốc. Vui lòng kiểm tra đơn đã thanh toán trước khi phát.'));

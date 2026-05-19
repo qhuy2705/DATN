@@ -5,4 +5,5 @@ import lombok.Data;
 @Data
 public class ReviewDoctorLeaveRequest {
     private String reviewNote;
+    private Boolean resolveConflictsWithRecovery;
 }

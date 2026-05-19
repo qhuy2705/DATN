@@ -29,7 +29,7 @@ public class PublicLookupController {
 
     @PostMapping("/appointments/request-otp")
     public ApiResponse<PublicLookupOtpResponse> requestAppointmentOtp(@Valid @RequestBody PublicLookupOtpRequest request) {
-        return ApiResponse.ok("Yêu cầu gửi OTP đã được tiếp nhận. Vui lòng kiểm tra email trong ít giây.", appointmentLookupService.requestOtp(request.getCode()));
+        return ApiResponse.ok("Yêu cầu gửi OTP đã được tiếp nhận. Vui lòng kiểm tra email trong ít giây.", appointmentLookupService.requestOtp(request.getCode(), request.getChannel()));
     }
 
     @PostMapping("/appointments/verify-otp")
@@ -62,7 +62,7 @@ public class PublicLookupController {
 
     @PostMapping("/results/request-otp")
     public ApiResponse<PublicLookupOtpResponse> requestResultOtp(@Valid @RequestBody PublicLookupOtpRequest request) {
-        return ApiResponse.ok("Yêu cầu gửi OTP đã được tiếp nhận. Vui lòng kiểm tra email trong ít giây.", resultLookupService.requestOtp(request.getCode()));
+        return ApiResponse.ok("Yêu cầu gửi OTP đã được tiếp nhận. Vui lòng kiểm tra email trong ít giây.", resultLookupService.requestOtp(request.getCode(), request.getChannel()));
     }
 
     @PostMapping("/results/verify-otp")

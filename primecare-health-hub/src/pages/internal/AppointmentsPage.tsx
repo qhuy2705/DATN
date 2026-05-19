@@ -1,12 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import {
-  AlertTriangle,
-  Clock,
-  Eye,
-  MoreHorizontal,
-  UserCheck,
-} from 'lucide-react';
+import { Eye } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { DataTable, type Column } from '@/components/DataTable';
 import { FilterBar } from '@/components/FilterBar';
@@ -15,35 +9,26 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { AppointmentSummaryCards } from '@/components/AppointmentSummaryCards';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
-import {
   useAdminAppointments,
-  useAppointmentAction,
+  useAdminDoctorOptions,
   useAppointmentSummary,
   useAppointmentSummaryRealtime,
 } from '@/hooks/use-admin-data';
-import { useBranches, useDoctors } from '@/hooks/use-public-data';
+import { useBranches } from '@/hooks/use-public-data';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import type { Appointment, AppointmentListQueryParams } from '@/types/api';
 import { buildAppointmentStatusOptions } from '@/lib/filter-options';
-import { useAuthStore } from '@/stores/auth-store';
-import { isAppointmentOverdue } from '@/lib/appointment-utils';
-import { OverdueBadge } from '@/components/OverdueBadge';
-
-type ActionType = 'claim';
+import { getInternalDoctorOptionNote } from '@/lib/doctor-readiness';
+import {
+  getCheckedInLateLabel,
+  isAppointmentOverdue,
+  isLateForCheckIn,
+} from '@/lib/appointment-utils';
+import {
+  CheckedInLateBadge,
+  LateCheckInBadge,
+  NoShowEligibleBadge,
+} from '@/components/OverdueBadge';
 
 type SummaryStatusKey =
   | '__all__'
@@ -53,8 +38,6 @@ type SummaryStatusKey =
   | 'COMPLETED'
   | 'NO_SHOW'
   | 'CANCELLED';
-
-type WorkflowFilterKey = '__all__' | 'overdue' | 'noShowFollowUp';
 
 function parseStatusFilter(value: string | null): SummaryStatusKey | null {
   if (!value) return null;
@@ -72,30 +55,16 @@ function parseStatusFilter(value: string | null): SummaryStatusKey | null {
     : null;
 }
 
-function readInitialAppointmentFilters(searchParams: URLSearchParams): {
-  status: SummaryStatusKey;
-  workflow: WorkflowFilterKey;
-} {
-  if (
-    searchParams.get('status') === 'NO_SHOW' &&
-    searchParams.get('followUpPending') === 'true'
-  ) {
-    return { status: '__all__', workflow: 'noShowFollowUp' };
-  }
-
-  return {
-    status: parseStatusFilter(searchParams.get('status')) ?? '__all__',
-    workflow: '__all__',
-  };
+function readInitialAppointmentStatus(searchParams: URLSearchParams): SummaryStatusKey {
+  return parseStatusFilter(searchParams.get('status')) ?? '__all__';
 }
 
 export default function AppointmentsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const currentUser = useAuthStore((s) => s.user);
-  const initialFilters = useMemo(
-    () => readInitialAppointmentFilters(searchParams),
+  const initialStatus = useMemo(
+    () => readInitialAppointmentStatus(searchParams),
     [searchParams],
   );
 
@@ -104,9 +73,6 @@ export default function AppointmentsPage() {
     const expiresAt = new Date(row.processingExpiresAt);
     return !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now();
   };
-
-  const isNoShowFollowUp = (row: Appointment) =>
-    row.status === 'NO_SHOW' && row.followUpPending === true;
 
   const hasActiveClaim = (row: Appointment) =>
     Boolean(row.processingById && !isClaimExpired(row));
@@ -131,51 +97,29 @@ export default function AppointmentsPage() {
     return 'Chưa nhận xử lý';
   };
 
-  const canActOnClaimedAppointment = (row: Appointment) => {
-    if (isClaimExpired(row)) return false;
-    if (!row.processingById || !currentUser?.id) return false;
-    const actionable =
-      ['REQUESTED', 'CONFIRMED', 'CHECKED_IN'].includes(row.status) ||
-      isNoShowFollowUp(row);
-    return actionable && String(row.processingById) === String(currentUser.id);
-  };
-
-  const canClaimAppointment = (row: Appointment) => {
-    const claimable =
-      ['REQUESTED', 'CONFIRMED'].includes(row.status) ||
-      isNoShowFollowUp(row);
-    return claimable && (!row.processingById || isClaimExpired(row));
-  };
-
   const statusOptions = useMemo(() => buildAppointmentStatusOptions(t), [t]);
 
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
-  const [statusFilter, setStatusFilter] = useState<SummaryStatusKey>(initialFilters.status);
-  const [workflowFilter, setWorkflowFilter] = useState<WorkflowFilterKey>(initialFilters.workflow);
+  const [statusFilter, setStatusFilter] = useState<SummaryStatusKey>(initialStatus);
   const [branchFilter, setBranchFilter] = useState('__all__');
   const [doctorFilter, setDoctorFilter] = useState('__all__');
-  const [checkInToken, setCheckInToken] = useState('');
-  const [checkInOpen, setCheckInOpen] = useState(false);
-  const [actionDialog, setActionDialog] = useState<{
-    type: ActionType;
-    row: Appointment;
-  } | null>(null);
   const debouncedSearch = useDebouncedValue(search.trim(), 400);
   const [now, setNow] = useState(() => new Date());
   const queryStatus = searchParams.get('status');
-  const queryFollowUpPending = searchParams.get('followUpPending');
 
   const { data: branches = [] } = useBranches();
   const doctorParams = useMemo(
     () => ({
-      size: '100',
       ...(branchFilter !== '__all__' ? { branchId: branchFilter } : {}),
     }),
     [branchFilter],
   );
-  const { data: doctorsPage } = useDoctors(doctorParams);
-  const doctors = useMemo(() => doctorsPage?.items ?? [], [doctorsPage?.items]);
+  const {
+    data: doctors = [],
+    isError: isDoctorsError,
+    isLoading: isDoctorsLoading,
+  } = useAdminDoctorOptions(doctorParams);
 
   useEffect(() => {
     setDoctorFilter('__all__');
@@ -189,25 +133,15 @@ export default function AppointmentsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, workflowFilter, doctorFilter, debouncedSearch]);
+  }, [statusFilter, doctorFilter, debouncedSearch]);
 
   useEffect(() => {
-    if (!queryStatus && !queryFollowUpPending) return;
-
-    if (queryStatus === 'NO_SHOW' && queryFollowUpPending === 'true') {
-      setStatusFilter('__all__');
-      setWorkflowFilter('noShowFollowUp');
-      setPage(1);
-      return;
-    }
-
     const nextStatus = parseStatusFilter(queryStatus);
     if (nextStatus) {
       setStatusFilter(nextStatus);
-      setWorkflowFilter('__all__');
       setPage(1);
     }
-  }, [queryFollowUpPending, queryStatus]);
+  }, [queryStatus]);
 
   const summaryParams = useMemo(
     () => ({
@@ -229,16 +163,11 @@ export default function AppointmentsPage() {
       page: String(page - 1),
       size: '20',
       ...(debouncedSearch ? { q: debouncedSearch } : {}),
-      ...(workflowFilter === 'noShowFollowUp'
-        ? { status: 'NO_SHOW', followUpPending: true }
-        : statusFilter !== '__all__'
-          ? { status: statusFilter }
-          : {}),
-      ...(workflowFilter === 'overdue' ? { overdue: 'true' } : {}),
+      ...(statusFilter !== '__all__' ? { status: statusFilter } : {}),
       ...(branchFilter !== '__all__' ? { branchId: branchFilter } : {}),
       ...(doctorFilter !== '__all__' ? { doctorId: doctorFilter } : {}),
     }),
-    [branchFilter, debouncedSearch, doctorFilter, page, statusFilter, workflowFilter],
+    [branchFilter, debouncedSearch, doctorFilter, page, statusFilter],
   );
 
   const { data, isLoading, isError, refetch } = useAdminAppointments(
@@ -248,43 +177,7 @@ export default function AppointmentsPage() {
       refetchOnWindowFocus: !isRealtimeConnected,
     },
   );
-
-  const appointmentAction = useAppointmentAction();
-
   const appointments = useMemo(() => data?.items ?? [], [data?.items]);
-
-  const openActionDialog = (type: ActionType, row: Appointment) => {
-    setActionDialog({ type, row });
-  };
-
-  const submitAction = async () => {
-    if (!actionDialog) return;
-    const { row } = actionDialog;
-
-    try {
-      await appointmentAction.mutateAsync({
-        id: row.id,
-        action: 'claim',
-      });
-      setActionDialog(null);
-      navigate(`/app/appointments/${row.id}/process`);
-    } catch {
-      // useAppointmentAction already shows the backend message.
-    }
-  };
-
-  const handleCheckIn = async () => {
-    try {
-      await appointmentAction.mutateAsync({
-        action: 'check-in',
-        body: { qrToken: checkInToken },
-      });
-      setCheckInOpen(false);
-      setCheckInToken('');
-    } catch {
-      // useAppointmentAction already shows the backend message.
-    }
-  };
 
   const columns: Column<Appointment>[] = [
     {
@@ -327,20 +220,25 @@ export default function AppointmentsPage() {
     {
       key: 'status',
       header: t('common.status'),
-      cell: (r) => (
-        <div>
-          <StatusBadge status={r.status} />
-          {isAppointmentOverdue(r, now) ? <span className="ml-2"><OverdueBadge /></span> : null}
-          {r.status === 'NO_SHOW' && r.followUpPending ? (
-            <span className="ml-2 inline-flex items-center whitespace-nowrap rounded-full border border-warning/25 bg-warning/10 px-2.5 py-1 text-xs font-medium leading-none text-warning">
-              Cần follow-up
-            </span>
-          ) : null}
-          <p className="text-xs text-muted-foreground mt-1">
-            {renderClaimStatus(r)}
-          </p>
-        </div>
-      ),
+      cell: (r) => {
+        const noShowEligible = isAppointmentOverdue(r, now);
+        const lateForCheckIn = !noShowEligible && isLateForCheckIn(r, now);
+        const checkedInLateLabel = getCheckedInLateLabel(r);
+
+        return (
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={r.status} />
+              {noShowEligible ? <NoShowEligibleBadge /> : null}
+              {lateForCheckIn ? <LateCheckInBadge /> : null}
+              {checkedInLateLabel ? <CheckedInLateBadge label={checkedInLateLabel} /> : null}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {renderClaimStatus(r)}
+            </p>
+          </div>
+        );
+      },
     },
   ];
 
@@ -349,12 +247,6 @@ export default function AppointmentsPage() {
       <PageHeader
         title={t('modules.appointments.title')}
         description={t('modules.appointments.desc')}
-        actions={
-          <Button variant="outline" onClick={() => setCheckInOpen(true)}>
-            <UserCheck className="h-4 w-4 mr-2" />
-            {t('modules.appointments.scanToken')}
-          </Button>
-        }
       />
 
       <FilterBar
@@ -364,23 +256,7 @@ export default function AppointmentsPage() {
             label: t('common.status'),
             options: statusOptions,
             value: statusFilter,
-            onChange: (v) => {
-              setStatusFilter(v as SummaryStatusKey);
-              setWorkflowFilter('__all__');
-            },
-          },
-          {
-            key: 'workflow',
-            label: 'Cần xử lý',
-            options: [
-              { value: 'overdue', label: 'Quá giờ' },
-              { value: 'noShowFollowUp', label: 'No-show cần xử lý' },
-            ],
-            value: workflowFilter,
-            onChange: (v) => {
-              setWorkflowFilter(v as WorkflowFilterKey);
-              if (v !== '__all__') setStatusFilter('__all__');
-            },
+            onChange: (v) => setStatusFilter(v as SummaryStatusKey),
           },
           {
             key: 'branch',
@@ -396,7 +272,9 @@ export default function AppointmentsPage() {
             key: 'doctor',
             label: t('common.doctor'),
             options: doctors.map((doctor) => ({
-              label: doctor.fullName,
+              label: [doctor.fullName, getInternalDoctorOptionNote(doctor)]
+                .filter(Boolean)
+                .join(' · '),
               value: doctor.id,
             })),
             value: doctorFilter,
@@ -405,12 +283,21 @@ export default function AppointmentsPage() {
         ]}
       />
 
+      {isDoctorsError ? (
+        <p className="mb-3 text-sm text-destructive">
+          Không tải được danh sách bác sĩ. Vui lòng thử lại.
+        </p>
+      ) : !isDoctorsLoading && doctors.length === 0 ? (
+        <p className="mb-3 text-sm text-muted-foreground">
+          Không có bác sĩ phù hợp.
+        </p>
+      ) : null}
+
       <AppointmentSummaryCards
         summary={summary}
         activeStatus={statusFilter}
         onSelect={(value) => {
           setStatusFilter(value);
-          setWorkflowFilter('__all__');
           setPage(1);
         }}
       />
@@ -427,110 +314,18 @@ export default function AppointmentsPage() {
         isLoading={isLoading}
         isError={isError}
         onRetry={() => void refetch()}
-        emptyMessage={
-          workflowFilter === 'noShowFollowUp'
-            ? 'Không có lịch no-show cần xử lý.'
-            : undefined
-        }
         keyExtractor={(r) => r.id}
-        actions={(row) => {
-          const canClaim = canClaimAppointment(row);
-          const canContinue = canActOnClaimedAppointment(row);
-
-          return (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => navigate(`/app/appointments/${row.id}/process`)}>
-                  <Eye className="h-4 w-4 mr-2" />
-                  Xem chi tiết
-                </DropdownMenuItem>
-
-                {canClaim ? (
-                  <DropdownMenuItem onClick={() => openActionDialog('claim', row)}>
-                    {isNoShowFollowUp(row) ? (
-                      <AlertTriangle className="h-4 w-4 mr-2" />
-                    ) : (
-                      <Clock className="h-4 w-4 mr-2" />
-                    )}
-                    {isNoShowFollowUp(row) ? 'Xử lý follow-up' : 'Nhận xử lý'}
-                  </DropdownMenuItem>
-                ) : null}
-
-                {canContinue ? (
-                  <DropdownMenuItem onClick={() => navigate(`/app/appointments/${row.id}/process`)}>
-                    <UserCheck className="h-4 w-4 mr-2" />
-                    {isNoShowFollowUp(row) ? 'Tiếp tục follow-up' : 'Tiếp tục xử lý'}
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          );
-        }}
+        actions={(row) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate(`/app/appointments/${row.id}/process`)}
+          >
+            <Eye className="mr-2 h-4 w-4" />
+            Xem chi tiết
+          </Button>
+        )}
       />
-
-      <Dialog open={checkInOpen} onOpenChange={setCheckInOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('modules.appointments.scanToken')}</DialogTitle>
-            <DialogDescription>
-              Dán mã trên phiếu hẹn hoặc quét bằng thiết bị scanner.
-            </DialogDescription>
-          </DialogHeader>
-          <Input
-            autoFocus
-            value={checkInToken}
-            onChange={(e) => setCheckInToken(e.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && checkInToken.trim() && !appointmentAction.isPending) {
-                event.preventDefault();
-                void handleCheckIn();
-              }
-            }}
-            placeholder="Nhập mã QR / token check-in"
-          />
-          <DialogFooter>
-            <Button
-              onClick={handleCheckIn}
-              disabled={appointmentAction.isPending || !checkInToken.trim()}
-            >
-              {appointmentAction.isPending ? 'Đang check-in...' : t('modules.appointments.checkIn')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!actionDialog} onOpenChange={() => setActionDialog(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {actionDialog?.row && isNoShowFollowUp(actionDialog.row)
-                ? 'Xử lý follow-up'
-                : t('modules.appointments.claim')}
-            </DialogTitle>
-            <DialogDescription>
-              Hệ thống tự giữ quyền xử lý trong 5 phút và tự gia hạn khi bạn còn thao tác trên màn này.
-            </DialogDescription>
-          </DialogHeader>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setActionDialog(null)}>
-              {t('common.cancel')}
-            </Button>
-            <Button onClick={submitAction} disabled={appointmentAction.isPending}>
-              {appointmentAction.isPending
-                ? 'Đang nhận...'
-                : actionDialog?.row && isNoShowFollowUp(actionDialog.row)
-                  ? 'Xử lý follow-up'
-                  : t('modules.appointments.claim')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

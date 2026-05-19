@@ -12,8 +12,11 @@ import java.time.LocalDateTime;
 public class InvoiceResponse {
     private Long id;
     private String code;
+    private String invoiceType;
     private Long serviceOrderId;
     private String serviceOrderCode;
+    private Long prescriptionId;
+    private String prescriptionCode;
     private Long encounterId;
     private String patientName;
     private String doctorName;
@@ -22,6 +25,8 @@ public class InvoiceResponse {
     private Long discountAmount;
     private Long taxAmount;
     private Long totalAmount;
+    private Long refundedAmount;
+    private Long remainingAmount;
     private java.util.List<InvoiceItemResponse> items;
     private PaymentMethod paymentMethod;
     private PaymentStatus paymentStatus;

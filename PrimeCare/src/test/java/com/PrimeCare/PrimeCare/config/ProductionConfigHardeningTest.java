@@ -22,14 +22,16 @@ class ProductionConfigHardeningTest {
 
     @Test
     void loginAndPublicOtpRemainRateLimited() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/com/PrimeCare/PrimeCare/modules/ratelimit/web/RateLimitInterceptor.java"));
+        String source = Files.readString(Path.of("src/main/resources/db/migration/V30__rate_limit_rules.sql"));
 
-        assertThat(source).contains("new RateLimitRule(\"/api/auth/login\", \"POST\"");
-        assertThat(source).contains("new RateLimitRule(\"/api/auth/refresh\", \"POST\"");
-        assertThat(source).contains("new RateLimitRule(\"/api/auth/patient/register\", \"POST\"");
-        assertThat(source).contains("new RateLimitRule(\"/api/auth/password/forgot\", \"POST\"");
+        assertThat(source).contains("/api/auth/login");
+        assertThat(source).contains("/api/auth/refresh");
+        assertThat(source).contains("/api/auth/patient/register");
+        assertThat(source).contains("/api/auth/password/forgot");
         assertThat(source).contains("CREATE_APPOINTMENT");
         assertThat(source).contains("PUBLIC_CONTACT");
+        assertThat(source).contains("BOOKING_EMAIL_OTP_REQUEST");
+        assertThat(source).contains("BOOKING_EMAIL_OTP_VERIFY");
         assertThat(source).contains("PUBLIC_LOOKUP_APPOINTMENT_REQUEST_OTP");
         assertThat(source).contains("PUBLIC_LOOKUP_APPOINTMENT_VERIFY_OTP");
         assertThat(source).contains("PUBLIC_LOOKUP_RESULT_REQUEST_OTP");

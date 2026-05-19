@@ -6,9 +6,13 @@ public record AppointmentReminderMailEvent(
         String patientFullName,
         String patientEmail,
         String doctorName,
+        String specialtyName,
         String branchName,
         String visitDate,
         String slotStart,
-        String slotEnd
+        String slotEnd,
+        String cancellationDeadline,
+        String templateCode,
+        String reminderKind
 ) {
 }

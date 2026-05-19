@@ -12,6 +12,6 @@ public class PublicAssistantMessageRequest {
     private String role;
 
     @NotBlank
-    @Size(max = 1000, message = "Nội dung tin nhắn tối đa 1000 ký tự")
+    @Size(max = 8000, message = "Nội dung lịch sử tối đa 8000 ký tự")
     private String text;
 }

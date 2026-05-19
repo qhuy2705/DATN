@@ -23,13 +23,34 @@ public class AdminAuditLogController {
     private final AuditLogService auditLogService;
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN','OPERATIONS_ADMIN')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN')")
     public ApiResponse<PageResponse<AuditLogResponse>> search(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required = false) String action,
             @RequestParam(required = false) String entity,
+            @RequestParam(required = false) Long entityId,
+            @RequestParam(required = false) Long actorId,
+            @RequestParam(required = false) String actorRole,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String keyword,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
             Pageable pageable
     ) {
-        return ApiResponse.ok("OK", auditLogService.search(entity, fromDate, toDate, pageable));
+        return ApiResponse.ok(
+                "OK",
+                auditLogService.search(
+                        date,
+                        action,
+                        entity,
+                        entityId,
+                        actorId,
+                        actorRole,
+                        q != null && !q.isBlank() ? q : keyword,
+                        fromDate,
+                        toDate,
+                        pageable
+                )
+        );
     }
 }

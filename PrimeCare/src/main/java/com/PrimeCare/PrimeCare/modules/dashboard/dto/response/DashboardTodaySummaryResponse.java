@@ -12,6 +12,11 @@ public class DashboardTodaySummaryResponse {
     private long noShowAppointments;
     private long totalEncounters;
     private long inProgressEncounters;
+    private long uniquePatientsInRange;
     private long waitingServiceItems;
+    private long grossPaidRevenue;
+    private long refundedAmountForPaidInvoices;
+    private long netPaidRevenue;
+    private long refundsProcessed;
     private long paidRevenue;
 }

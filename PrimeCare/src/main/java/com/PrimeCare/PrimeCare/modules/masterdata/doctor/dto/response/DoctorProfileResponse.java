@@ -51,4 +51,6 @@ public class DoctorProfileResponse {
     private String accountPhone;
     private String accountRole;
     private String accountStatus;
+    private boolean operationalReady;
+    private String notReadyReason;
 }

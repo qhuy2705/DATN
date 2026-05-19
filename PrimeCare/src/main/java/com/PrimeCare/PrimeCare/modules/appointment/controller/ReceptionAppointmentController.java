@@ -1,9 +1,11 @@
 package com.PrimeCare.PrimeCare.modules.appointment.controller;
 
 import com.PrimeCare.PrimeCare.config.PaginationConfig;
+import com.PrimeCare.PrimeCare.modules.appointment.dto.request.AppointmentCheckInRequest;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.request.CreateWalkInAppointmentRequest;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AppointmentAdminResponse;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.ReceptionQueueSummaryResponse;
+import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentAdminService;
 import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentReceptionService;
 import com.PrimeCare.PrimeCare.shared.common.ApiResponse;
 import com.PrimeCare.PrimeCare.shared.common.PageResponse;
@@ -25,9 +27,10 @@ import java.time.LocalDate;
 public class ReceptionAppointmentController {
 
     private final AppointmentReceptionService appointmentReceptionService;
+    private final AppointmentAdminService appointmentAdminService;
 
     @PostMapping("/walk-in")
-    @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
+    @PreAuthorize("hasRole('STAFF')")
     public ApiResponse<AppointmentAdminResponse> createWalkIn(
             Authentication authentication,
             @Valid @RequestBody CreateWalkInAppointmentRequest request
@@ -40,11 +43,13 @@ public class ReceptionAppointmentController {
     }
 
     @PostMapping("/{id}/arrive")
-    @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
+    @Deprecated(since = "2026-05", forRemoval = false)
+    @PreAuthorize("hasRole('STAFF')")
     public ApiResponse<AppointmentAdminResponse> markArrived(
             @PathVariable Long id,
             Authentication authentication
     ) {
+        // Deprecated: Check-in is the primary reception action and already implies arrival.
         Long currentUserId = Long.valueOf(authentication.getName());
         return ApiResponse.ok(
                 "Đã đánh dấu bệnh nhân đã đến",
@@ -52,8 +57,21 @@ public class ReceptionAppointmentController {
         );
     }
 
+    @PostMapping("/check-in/qr")
+    @PreAuthorize("hasRole('STAFF')")
+    public ApiResponse<AppointmentAdminResponse> qrCheckIn(
+            Authentication authentication,
+            @Valid @RequestBody AppointmentCheckInRequest request
+    ) {
+        Long currentUserId = Long.valueOf(authentication.getName());
+        return ApiResponse.ok(
+                "Check-in QR thành công",
+                appointmentAdminService.checkInByQrToken(request.getQrToken(), currentUserId)
+        );
+    }
+
     @PostMapping("/{id}/manual-check-in")
-    @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
+    @PreAuthorize("hasRole('STAFF')")
     public ApiResponse<AppointmentAdminResponse> manualCheckIn(
             @PathVariable Long id,
             Authentication authentication
@@ -66,7 +84,7 @@ public class ReceptionAppointmentController {
     }
 
     @GetMapping("/queue")
-    @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
+    @PreAuthorize("hasRole('STAFF')")
     public ApiResponse<PageResponse<AppointmentAdminResponse>> queue(
             @RequestParam(required = false) LocalDate visitDate,
             @RequestParam(required = false) Long branchId,
@@ -74,6 +92,7 @@ public class ReceptionAppointmentController {
             @RequestParam(required = false) Long specialtyId,
             @RequestParam(required = false) ArrivalStatus arrivalStatus,
             @RequestParam(required = false) AppointmentSourceType sourceType,
+            @RequestParam(required = false) String triagePriority,
             @RequestParam(required = false) Boolean overdue,
             @RequestParam(required = false) String q,
             @PageableDefault(size = 10) Pageable pageable
@@ -87,6 +106,7 @@ public class ReceptionAppointmentController {
                         specialtyId,
                         arrivalStatus,
                         sourceType,
+                        triagePriority,
                         overdue,
                         q,
                         PaginationConfig.withoutSort(pageable)
@@ -95,7 +115,7 @@ public class ReceptionAppointmentController {
     }
 
     @GetMapping("/queue/summary")
-    @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
+    @PreAuthorize("hasRole('STAFF')")
     public ApiResponse<ReceptionQueueSummaryResponse> queueSummary(
             @RequestParam(required = false) LocalDate visitDate,
             @RequestParam(required = false) Long branchId,
@@ -103,6 +123,7 @@ public class ReceptionAppointmentController {
             @RequestParam(required = false) Long specialtyId,
             @RequestParam(required = false) ArrivalStatus arrivalStatus,
             @RequestParam(required = false) AppointmentSourceType sourceType,
+            @RequestParam(required = false) String triagePriority,
             @RequestParam(required = false) Boolean overdue,
             @RequestParam(required = false) String q
     ) {
@@ -115,6 +136,7 @@ public class ReceptionAppointmentController {
                         specialtyId,
                         arrivalStatus,
                         sourceType,
+                        triagePriority,
                         overdue,
                         q
                 )

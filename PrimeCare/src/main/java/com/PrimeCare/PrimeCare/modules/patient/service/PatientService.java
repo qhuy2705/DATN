@@ -179,7 +179,7 @@ public class PatientService {
             entity.setPhone(req.getPhone().trim());
         }
 
-        entity.setEmail(normalizeNullable(req.getEmail()));
+        entity.setEmail(normalizeNullableOrKeep(req.getEmail(), entity.getEmail()));
         entity.setDob(req.getDob() != null ? req.getDob() : entity.getDob());
         entity.setGender(req.getGender() != null ? req.getGender() : entity.getGender());
         entity.setAddress(normalizeNullableOrKeep(req.getAddress(), entity.getAddress()));

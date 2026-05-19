@@ -10,6 +10,20 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class PublicLookupOtpDeliveryService {
 
+    public void assertEmailChannel(String channel) {
+        if (channel == null || channel.isBlank()) {
+            return;
+        }
+        String normalized = channel.trim().toUpperCase();
+        if (NotificationChannel.EMAIL.name().equals(normalized)) {
+            return;
+        }
+        if (NotificationChannel.SMS.name().equals(normalized)) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "Kênh SMS chưa được hỗ trợ");
+        }
+        throw new ApiException(ErrorCode.INVALID_REQUEST, "Kênh OTP không hợp lệ. Hiện chỉ hỗ trợ EMAIL");
+    }
+
     public DeliveryTarget resolveEmail(String email, String missingMessage) {
         if (email != null && !email.isBlank()) {
             return new DeliveryTarget(email.trim(), NotificationChannel.EMAIL);

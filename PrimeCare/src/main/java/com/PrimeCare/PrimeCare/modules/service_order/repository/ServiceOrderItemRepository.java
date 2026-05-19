@@ -3,14 +3,19 @@ package com.PrimeCare.PrimeCare.modules.service_order.repository;
 import com.PrimeCare.PrimeCare.modules.service_order.entity.ServiceOrderItem;
 import com.PrimeCare.PrimeCare.shared.enums.ServiceOrderItemStatus;
 import com.PrimeCare.PrimeCare.shared.enums.ServiceResultStatus;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
+import java.util.Optional;
 
 public interface ServiceOrderItemRepository extends JpaRepository<ServiceOrderItem, Long> {
 
@@ -56,4 +61,18 @@ public interface ServiceOrderItemRepository extends JpaRepository<ServiceOrderIt
             @Param("qLower") String qLower,
             Pageable pageable
     );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "5000"))
+    @EntityGraph(attributePaths = {
+            "medicalService",
+            "serviceOrder",
+            "serviceOrder.items",
+            "serviceOrder.encounter",
+            "serviceOrder.encounter.appointment",
+            "serviceOrder.encounter.doctor",
+            "serviceOrder.encounter.branch"
+    })
+    @Query("select i from ServiceOrderItem i where i.id = :id")
+    Optional<ServiceOrderItem> findWithLockById(@Param("id") Long id);
 }

@@ -3,6 +3,11 @@ import type {
   Appointment,
   AuditLog,
   AvailabilitySlot,
+  BookingRestriction,
+  BookingRestrictionDetailResponse,
+  BookingRestrictionOverrideResponse,
+  BookingRestrictionSummary,
+  BookingViolationEvent,
   BranchMasterDataSummary,
   CashierSummary,
   Branch,
@@ -15,22 +20,44 @@ import type {
   DoctorAppointmentSummary,
   DoctorMasterDataSummary,
   DoctorCareerTimelineItem,
+  DoctorPublicSpecialty,
+  DoctorOption,
   EncounterDiagnosisResponse,
   EncounterStatus,
+  DoctorCancellationAffectedAppointment,
+  DoctorCancellationRecoverySummary,
   InvoiceItemResponse,
+  RefundableInvoiceItem,
   MedicalService,
   MedicationBatch,
   PaymentStatus,
   PublicFaqItem,
   PaginatedData,
+  RateLimitRule,
+  FollowUpQueueItem,
   ExpiringBatch,
   PharmacyInventoryItem,
   PrescriptionStatus,
   ServiceOrder,
   ServiceResultAttachment,
+  ServiceResultTemplateCode,
   Specialty,
+  RescheduleOffer,
+  RescheduleOfferAppointmentInfo,
   StaffMasterDataSummary,
   Staff,
+  ChronicCondition,
+  ConfidenceLevel,
+  FunctionalImpact,
+  PreTriageLevel,
+  PreTriageSource,
+  RedFlag,
+  SymptomOnset,
+  TriageAuditLog,
+  TriageMatchedRule,
+  TriageMatchedTerm,
+  TriagePriority,
+  TriageReviewStatus,
 } from '@/types/api';
 import i18n from '@/i18n';
 
@@ -69,6 +96,13 @@ function formatTimeDisplay(value: unknown): string {
   const match = trimmed.match(/^(\d{2}:\d{2})(?::\d{2})?$/);
   if (match) return match[1];
 
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    const date = new Date(trimmed.replace(' ', 'T'));
+    if (!Number.isNaN(date.getTime())) {
+      return date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    }
+  }
+
   return trimmed;
 }
 
@@ -105,11 +139,54 @@ const APPOINTMENT_STATUSES: readonly Appointment['status'][] = [
   'NO_SHOW',
 ];
 
+const PRE_TRIAGE_LEVELS: readonly PreTriageLevel[] = ['NONE', 'WATCH', 'RED_FLAG'];
+const TRIAGE_PRIORITIES: readonly TriagePriority[] = ['URGENT', 'PRIORITY', 'ROUTINE'];
+const TRIAGE_REVIEW_STATUSES: readonly TriageReviewStatus[] = ['ACCEPTED', 'OVERRIDDEN', 'MANUAL'];
+const PRE_TRIAGE_SOURCES: readonly PreTriageSource[] = ['RULE', 'AI', 'HYBRID'];
+const CONFIDENCE_LEVELS: readonly ConfidenceLevel[] = ['HIGH', 'MEDIUM', 'LOW'];
+const SYMPTOM_ONSETS: readonly SymptomOnset[] = [
+  'TODAY',
+  'DAYS_2_3',
+  'WEEK_1',
+  'OVER_MONTH',
+  'UNKNOWN',
+];
+const CHRONIC_CONDITIONS: readonly ChronicCondition[] = [
+  'CARDIOVASCULAR',
+  'DIABETES',
+  'RESPIRATORY',
+  'CANCER',
+  'IMMUNODEFICIENCY',
+  'PREGNANCY',
+  'ELDERLY',
+  'NONE',
+];
+const FUNCTIONAL_IMPACTS: readonly FunctionalImpact[] = [
+  'NORMAL',
+  'MILD_DIFFICULTY',
+  'SEVERE_DIFFICULTY',
+  'UNABLE_SELF_CARE',
+  'UNKNOWN',
+];
+const RED_FLAGS: readonly RedFlag[] = [
+  'CHEST_PAIN',
+  'DYSPNEA',
+  'FAINTING',
+  'SEIZURE',
+  'STROKE_SIGNS',
+  'HEAVY_BLEEDING',
+  'SEVERE_PAIN',
+  'HIGH_FEVER',
+  'ALLERGIC_REACTION',
+  'NONE',
+];
+
 const PAYMENT_STATUSES: readonly PaymentStatus[] = [
   'UNPAID',
   'PENDING_CONFIRMATION',
   'PAYMENT_REVIEW',
   'PAID',
+  'PARTIALLY_REFUNDED',
   'REFUNDED',
   'VOID',
 ];
@@ -156,6 +233,251 @@ function normalizeOptionalEncounterStatus(value: unknown): EncounterStatus | und
   }
 
   return undefined;
+}
+
+function normalizeOptionalEnum<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  if (typeof value === 'string' && allowed.includes(value as T)) {
+    return value as T;
+  }
+
+  return null;
+}
+
+function normalizeEnumArray<T extends string>(value: unknown, allowed: readonly T[]): T[] | null {
+  const items = normalizeStringArray(value);
+  if (!items) return null;
+
+  return items.filter((item): item is T => allowed.includes(item as T));
+}
+
+function normalizeObjectArray(value: unknown): Record<string, unknown>[] {
+  const asArray = Array.isArray(value) ? value : parseJsonString<unknown[]>(value);
+  if (!Array.isArray(asArray)) return [];
+
+  return asArray.filter(isRecord);
+}
+
+function normalizeMatchedTerms(value: unknown): TriageMatchedTerm[] {
+  return normalizeObjectArray(value)
+    .map((item) => ({
+      term: typeof item.term === 'string' ? item.term : '',
+      code: typeof item.code === 'string' ? item.code : '',
+      label: typeof item.label === 'string' ? item.label : null,
+      category: typeof item.category === 'string' ? item.category : undefined,
+      source: typeof item.source === 'string' ? item.source : undefined,
+      evidenceText:
+        typeof item.evidenceText === 'string'
+          ? item.evidenceText
+          : typeof item.evidence_text === 'string'
+            ? item.evidence_text
+            : null,
+      weight: typeof item.weight === 'number' ? item.weight : null,
+    }))
+    .filter((item) => item.term || item.code);
+}
+
+function normalizeMatchedRules(value: unknown): TriageMatchedRule[] {
+  return normalizeObjectArray(value)
+    .map((item) => ({
+      id: String(item.id ?? item.ruleId ?? ''),
+      priority: typeof item.priority === 'string' ? item.priority : null,
+      level: typeof item.level === 'string' ? item.level : null,
+      reason: typeof item.reason === 'string' ? item.reason : null,
+      source: typeof item.source === 'string' ? item.source : null,
+      matchedCodes: normalizeStringArray(item.matchedCodes ?? item.matched_codes) ?? null,
+    }))
+    .filter((item) => item.id || item.reason);
+}
+
+function normalizeTriageAuditLogs(value: unknown): TriageAuditLog[] {
+  return normalizeObjectArray(value)
+    .map((item, index) => ({
+      id:
+        typeof item.id === 'string' || typeof item.id === 'number'
+          ? item.id
+          : `audit-${index}`,
+      actorType:
+        typeof item.actorType === 'string'
+          ? item.actorType
+          : typeof item.actor_type === 'string'
+            ? item.actor_type
+            : 'SYSTEM',
+      actorName:
+        typeof item.actorName === 'string'
+          ? item.actorName
+          : typeof item.actor_name === 'string'
+            ? item.actor_name
+            : null,
+      action: typeof item.action === 'string' ? item.action : '',
+      fromPriority:
+        typeof item.fromPriority === 'string'
+          ? item.fromPriority
+          : typeof item.from_priority === 'string'
+            ? item.from_priority
+            : null,
+      toPriority:
+        typeof item.toPriority === 'string'
+          ? item.toPriority
+          : typeof item.to_priority === 'string'
+            ? item.to_priority
+            : null,
+      reason: typeof item.reason === 'string' ? item.reason : null,
+      createdAt:
+        typeof item.createdAt === 'string'
+          ? item.createdAt
+          : typeof item.created_at === 'string'
+            ? item.created_at
+            : null,
+    }))
+    .filter((item) => item.action || item.fromPriority || item.toPriority || item.reason);
+}
+
+function pickString(item: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === 'string' && value.trim()) return value;
+    if (typeof value === 'number') return String(value);
+  }
+  return undefined;
+}
+
+function pickJsonValue(item: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(item, key) && typeof item[key] !== 'undefined') {
+      return item[key];
+    }
+  }
+  return undefined;
+}
+
+function pickBoolean(item: Record<string, unknown>, ...keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+      if (value.toLowerCase() === 'true') return true;
+      if (value.toLowerCase() === 'false') return false;
+    }
+  }
+  return undefined;
+}
+
+function normalizeRescheduleAppointmentInfo(raw: unknown): RescheduleOfferAppointmentInfo | null {
+  if (!isRecord(raw)) return null;
+  return {
+    id: pickString(raw, 'id', 'appointmentId'),
+    code: pickString(raw, 'code', 'appointmentCode'),
+    doctorName: pickLocalizedField(
+      raw,
+      'doctorNameVn',
+      'doctorNameEn',
+      'doctorName',
+      'heldDoctorName',
+      'proposedDoctorName',
+      'originalDoctorName',
+    ),
+    specialtyName: pickLocalizedField(
+      raw,
+      'specialtyNameVn',
+      'specialtyNameEn',
+      'specialtyName',
+      'heldSpecialtyName',
+      'proposedSpecialtyName',
+      'originalSpecialtyName',
+    ),
+    branchName: pickLocalizedField(raw, 'branchNameVn', 'branchNameEn', 'branchName'),
+    visitDate: pickString(raw, 'visitDate', 'date', 'heldVisitDate', 'proposedVisitDate', 'originalVisitDate'),
+    slotStart: formatTimeDisplay(
+      raw.slotStart ?? raw.startTime ?? raw.heldSlotStart ?? raw.proposedSlotStart ?? raw.originalSlotStart,
+    ),
+    slotEnd: formatTimeDisplay(
+      raw.slotEnd ?? raw.endTime ?? raw.heldSlotEnd ?? raw.proposedSlotEnd ?? raw.originalSlotEnd,
+    ),
+    status: pickString(raw, 'status'),
+  };
+}
+
+export function normalizeRescheduleOffer(raw: unknown): RescheduleOffer {
+  const item = (raw ?? {}) as Record<string, unknown>;
+  const selfAppointment =
+    item.doctorName != null || item.visitDate != null || item.slotStart != null
+      ? normalizeRescheduleAppointmentInfo(item)
+      : null;
+  return {
+    token: pickString(item, 'token') ?? '',
+    status: pickString(item, 'status', 'holdStatus') ?? 'INVALID',
+    patientFullName: pickString(item, 'patientFullName', 'patientName'),
+    patientEmail: pickString(item, 'patientEmail'),
+    patientPhone: pickString(item, 'patientPhone'),
+    originalAppointment: normalizeRescheduleAppointmentInfo(
+      item.originalAppointment ?? item.oldAppointment ?? item.cancelledAppointment,
+    ),
+    proposedAppointment: normalizeRescheduleAppointmentInfo(
+      item.proposedAppointment ?? item.newAppointment ?? item.heldSlot,
+    ),
+    acceptedAppointment:
+      normalizeRescheduleAppointmentInfo(
+        item.acceptedAppointment ?? item.appointment ?? item.confirmedAppointment,
+      ) ?? selfAppointment,
+    expiresAt: pickString(item, 'expiresAt', 'holdExpiresAt') ?? null,
+    sameDoctor: pickBoolean(item, 'sameDoctor'),
+    sameDay: pickBoolean(item, 'sameDay'),
+    sameSpecialty: pickBoolean(item, 'sameSpecialty'),
+    message: pickString(item, 'message') ?? null,
+  };
+}
+
+export function normalizeAffectedAppointment(raw: unknown): DoctorCancellationAffectedAppointment {
+  const item = (raw ?? {}) as Record<string, unknown>;
+  return {
+    id: String(item.id ?? item.appointmentId ?? ''),
+    code: pickString(item, 'code', 'appointmentCode'),
+    patientFullName: pickString(item, 'patientFullName', 'patientName') ?? '',
+    patientPhone: pickString(item, 'patientPhone'),
+    patientEmail: pickString(item, 'patientEmail'),
+    doctorName: pickLocalizedField(item, 'doctorNameVn', 'doctorNameEn', 'doctorName'),
+    specialtyName: pickLocalizedField(item, 'specialtyNameVn', 'specialtyNameEn', 'specialtyName'),
+    branchName: pickLocalizedField(item, 'branchNameVn', 'branchNameEn', 'branchName'),
+    visitDate: pickString(item, 'visitDate'),
+    slotStart: formatTimeDisplay(item.slotStart ?? item.startTime),
+    slotEnd: formatTimeDisplay(item.slotEnd ?? item.endTime),
+    status: pickString(item, 'status'),
+  };
+}
+
+export function normalizeRecoverySummary(raw: unknown): DoctorCancellationRecoverySummary | null {
+  if (!isRecord(raw)) return null;
+  return {
+    affectedAppointments: pickNumberField(raw, 'affectedAppointments', 'affectedAppointmentCount'),
+    slotHoldsCreated: pickNumberField(raw, 'slotHoldsCreated', 'slotHoldCount'),
+    emailsQueued: pickNumberField(raw, 'emailsQueued', 'emailQueuedCount'),
+    staffFollowUpRequired: pickNumberField(raw, 'staffFollowUpRequired', 'manualFollowUpCount'),
+  };
+}
+
+export function normalizeFollowUpQueueItem(raw: unknown): FollowUpQueueItem {
+  const item = (raw ?? {}) as Record<string, unknown>;
+  return {
+    id: String(item.id ?? item.followUpId ?? item.appointmentId ?? ''),
+    appointmentId: String(item.appointmentId ?? item.id ?? ''),
+    appointmentCode: pickString(item, 'appointmentCode', 'code'),
+    followUpType: pickString(item, 'followUpType', 'type', 'category') ?? 'NO_SHOW',
+    patientFullName: pickString(item, 'patientFullName', 'patientName') ?? '',
+    patientPhone: pickString(item, 'patientPhone'),
+    patientEmail: pickString(item, 'patientEmail'),
+    doctorName: pickLocalizedField(item, 'doctorNameVn', 'doctorNameEn', 'doctorName'),
+    specialtyName: pickLocalizedField(item, 'specialtyNameVn', 'specialtyNameEn', 'specialtyName'),
+    originalVisitDate: pickString(item, 'originalVisitDate', 'visitDate'),
+    originalSlotStart: formatTimeDisplay(item.originalSlotStart ?? item.slotStart),
+    originalSlotEnd: formatTimeDisplay(item.originalSlotEnd ?? item.slotEnd),
+    heldDoctorName: pickString(item, 'heldDoctorName', 'proposedDoctorName'),
+    heldVisitDate: pickString(item, 'heldVisitDate', 'proposedVisitDate'),
+    heldSlotStart: formatTimeDisplay(item.heldSlotStart ?? item.proposedSlotStart),
+    heldSlotEnd: formatTimeDisplay(item.heldSlotEnd ?? item.proposedSlotEnd),
+    holdStatus: pickString(item, 'holdStatus'),
+    expiresAt: pickString(item, 'expiresAt', 'holdExpiresAt') ?? null,
+    createdAt: pickString(item, 'createdAt') ?? null,
+  };
 }
 
 function normalizeDiagnosisType(value: unknown): EncounterDiagnosisResponse['diagnosisType'] {
@@ -267,7 +589,7 @@ function normalizeCareerTimeline(value: unknown): DoctorCareerTimelineItem[] | u
         description: typeof entry.description === 'string' ? entry.description.trim() : undefined,
       } satisfies DoctorCareerTimelineItem;
     })
-    .filter((entry): entry is DoctorCareerTimelineItem => Boolean(entry));
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
   return items.length ? items : undefined;
 }
@@ -300,7 +622,7 @@ function normalizeServiceResultAttachments(
           label: typeof entry.label === 'string' ? entry.label : undefined,
         } satisfies ServiceResultAttachment;
       })
-      .filter((entry): entry is ServiceResultAttachment => Boolean(entry));
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
     if (attachments.length > 0) {
       return attachments;
@@ -336,7 +658,7 @@ function normalizeServiceOrderItemResultFields(row: Record<string, unknown>) {
       row.attachmentUrl,
       row.attachmentMimeType,
     ),
-    templateCode: typeof row.templateCode === 'string' ? row.templateCode : undefined,
+    templateCode: typeof row.templateCode === 'string' ? (row.templateCode as ServiceResultTemplateCode) : undefined,
     templateSchemaJson:
       typeof row.templateSchemaJson === 'string' ? row.templateSchemaJson : undefined,
     conclusionText:
@@ -361,6 +683,42 @@ function normalizeServiceOrderItemResultFields(row: Record<string, unknown>) {
     turnaroundMinutes:
       typeof row.turnaroundMinutes === 'number' ? row.turnaroundMinutes : undefined,
     overdue: typeof row.overdue === 'boolean' ? row.overdue : undefined,
+  };
+}
+
+function normalizeRefundFields(row: Record<string, unknown>) {
+  return {
+    refundStatus: pickStringField(row, 'refundStatus', 'refund_status', 'refundState', 'refund_state'),
+    refunded: pickBooleanField(row, 'refunded', 'isRefunded', 'is_refunded'),
+    refundedAt: pickStringField(
+      row,
+      'refundedAt',
+      'refunded_at',
+      'refundAt',
+      'refund_at',
+      'cancelledAt',
+      'cancelled_at',
+      'canceledAt',
+      'canceled_at',
+    ),
+    refundReason: pickStringField(
+      row,
+      'refundReason',
+      'refund_reason',
+      'cancellationReason',
+      'cancellation_reason',
+      'cancelReason',
+      'cancel_reason',
+    ),
+    notRefundableReason: pickStringField(
+      row,
+      'notRefundableReason',
+      'not_refundable_reason',
+      'nonRefundableReason',
+      'non_refundable_reason',
+    ),
+    refundedAmount: pickNumberField(row, 'refundedAmount', 'refunded_amount', 'refundAmount', 'refund_amount'),
+    remainingAmount: pickNumberField(row, 'remainingAmount', 'remaining_amount'),
   };
 }
 
@@ -440,6 +798,212 @@ export function unwrapPageItems<T>(payload: unknown): T[] {
   return unwrapPage<T>(payload).items;
 }
 
+export function normalizeBookingViolationEvent(raw: unknown): BookingViolationEvent {
+  const item = (raw ?? {}) as Record<string, unknown>;
+  const voidInfo = isRecord(item.voidInfo) ? item.voidInfo : {};
+
+  return {
+    id: String(item.id ?? item.eventId ?? ''),
+    restrictionId: pickString(item, 'restrictionId', 'bookingRestrictionId'),
+    patientId: pickString(item, 'patientId'),
+    patientFullName: pickString(item, 'patientFullName', 'patientName', 'fullName'),
+    patientPhone: pickString(item, 'patientPhone', 'phone'),
+    patientEmail: pickString(item, 'patientEmail', 'email'),
+    appointmentId: pickString(item, 'appointmentId'),
+    appointmentCode: pickString(item, 'appointmentCode', 'appointmentCodeSnapshot', 'code'),
+    type: pickString(item, 'type', 'eventType', 'violationType') ?? 'NO_SHOW',
+    points: pickNumericField(item, 'points', 'pointDelta', 'scoreDelta', 'amount') ?? 0,
+    status: pickString(item, 'status', 'eventStatus'),
+    note: pickString(item, 'note', 'reason', 'description'),
+    createdAt: pickString(item, 'createdAt', 'occurredAt'),
+    createdByName: pickString(item, 'createdByName', 'createdBy', 'actorName'),
+    voidedAt: pickString(item, 'voidedAt', 'voidAt') ?? pickString(voidInfo, 'voidedAt', 'voidAt'),
+    voidedByName:
+      pickString(item, 'voidedByName', 'voidedBy') ??
+      pickString(voidInfo, 'voidedByName', 'voidedBy'),
+    voidReason:
+      pickString(item, 'voidReason', 'voidedReason') ??
+      pickString(voidInfo, 'reason', 'voidReason', 'voidedReason'),
+    canVoid: pickBoolean(item, 'canVoid'),
+  };
+}
+
+export function normalizeBookingRestrictionOverride(raw: unknown): BookingRestrictionOverrideResponse {
+  const item = (raw ?? {}) as Record<string, unknown>;
+
+  return {
+    id: String(item.id ?? item.overrideId ?? ''),
+    restrictionId: pickString(item, 'restrictionId', 'bookingRestrictionId'),
+    patientId: pickString(item, 'patientId'),
+    patientFullName: pickString(item, 'patientFullName', 'patientName', 'fullName'),
+    patientPhone: pickString(item, 'patientPhone', 'phone'),
+    patientEmail: pickString(item, 'patientEmail', 'email'),
+    appointmentId: pickString(item, 'appointmentId'),
+    appointmentCode: pickString(item, 'appointmentCode', 'code'),
+    status: pickString(item, 'status', 'overrideStatus'),
+    reason: pickString(item, 'reason', 'note', 'description'),
+    validHours: pickNumericField(item, 'validHours', 'hours'),
+    validFrom: pickString(item, 'validFrom', 'startsAt', 'createdAt'),
+    validUntil: pickString(item, 'validUntil', 'expiresAt', 'overrideExpiresAt'),
+    expiresAt: pickString(item, 'expiresAt', 'validUntil', 'overrideExpiresAt'),
+    usedAt: pickString(item, 'usedAt'),
+    usedByAppointmentId: pickString(item, 'usedByAppointmentId', 'usedAppointmentId'),
+    usedByAppointmentCode: pickString(item, 'usedByAppointmentCode', 'usedAppointmentCode'),
+    createdAt: pickString(item, 'createdAt'),
+    createdByName: pickString(item, 'createdByName', 'createdBy', 'actorName'),
+  };
+}
+
+export function normalizeBookingRestriction(raw: unknown): BookingRestriction {
+  const item = (raw ?? {}) as Record<string, unknown>;
+  const eventsRaw = item.events ?? item.violationEvents ?? item.violation_events;
+  const overridesRaw = item.overrides ?? item.overrideHistory ?? item.overrideRecords;
+
+  return {
+    id: String(item.id ?? item.restrictionId ?? ''),
+    patientId: pickString(item, 'patientId'),
+    patientCode: pickString(item, 'patientCode', 'code'),
+    patientFullName: pickString(item, 'patientFullName', 'patientName', 'fullName') ?? '',
+    patientPhone: pickString(item, 'patientPhone', 'phone'),
+    patientEmail: pickString(item, 'patientEmail', 'email'),
+    patientDob: pickString(item, 'patientDob', 'dob', 'dateOfBirth'),
+    appointmentId: pickString(item, 'appointmentId'),
+    appointmentCode: pickString(item, 'appointmentCode', 'appointmentCodeSnapshot', 'code'),
+    monthlyScore:
+      pickNumericField(
+        item,
+        'monthlyScore',
+        'currentMonthlyScore',
+        'currentScore',
+        'scoreSnapshot',
+        'score',
+        'points',
+      ) ?? 0,
+    level:
+      pickString(item, 'level', 'restrictionLevel', 'currentLevel', 'status') ?? 'WARNING',
+    status: pickString(item, 'status', 'state'),
+    noShowCount:
+      pickNumericField(item, 'noShowCount', 'monthlyNoShowCount', 'no_show_count') ?? 0,
+    latestViolationAt:
+      pickString(item, 'latestViolationAt', 'lastViolationAt', 'lastEventAt'),
+    startsAt: pickString(item, 'startsAt', 'startedAt', 'effectiveFrom'),
+    expiresAt: pickString(item, 'expiresAt', 'expiredAt', 'effectiveTo'),
+    reason: pickString(item, 'reason', 'latestReason', 'description'),
+    createdByName: pickString(item, 'createdByName', 'createdBy', 'actorName'),
+    createdAt: pickString(item, 'createdAt'),
+    liftedAt: pickString(item, 'liftedAt'),
+    liftedByName: pickString(item, 'liftedByName', 'liftedBy'),
+    liftReason: pickString(item, 'liftReason', 'liftedReason'),
+    overrideExpiresAt: pickString(item, 'overrideExpiresAt', 'overrideValidUntil'),
+    supportedActions: normalizeStringArray(item.supportedActions ?? item.actions ?? item.availableActions) ?? [],
+    canLift: pickBoolean(item, 'canLift'),
+    canOverrideOnce: pickBoolean(item, 'canOverrideOnce', 'canOverride'),
+    canStaffPardon: pickBoolean(item, 'canStaffPardon', 'supportsStaffPardon'),
+    canCreateManualViolation: pickBoolean(item, 'canCreateManualViolation', 'supportsManualViolation'),
+    events: Array.isArray(eventsRaw) ? eventsRaw.map(normalizeBookingViolationEvent) : undefined,
+    overrides: Array.isArray(overridesRaw) ? overridesRaw.map(normalizeBookingRestrictionOverride) : undefined,
+  };
+}
+
+export function normalizeBookingRestrictionDetail(raw: unknown): BookingRestrictionDetailResponse {
+  const item = (raw ?? {}) as Record<string, unknown>;
+  const restrictionSource = isRecord(item.restriction)
+    ? ({ ...item, ...item.restriction } as Record<string, unknown>)
+    : item;
+  const eventsRaw =
+    item.events ??
+    item.violationEvents ??
+    item.patientViolationEvents ??
+    restrictionSource.events ??
+    restrictionSource.violationEvents;
+  const overridesRaw =
+    item.overrides ??
+    item.overrideHistory ??
+    item.overrideRecords ??
+    restrictionSource.overrides ??
+    restrictionSource.overrideHistory;
+  const events = Array.isArray(eventsRaw) ? eventsRaw.map(normalizeBookingViolationEvent) : [];
+  const overrides = Array.isArray(overridesRaw)
+    ? overridesRaw.map(normalizeBookingRestrictionOverride)
+    : [];
+
+  return {
+    restriction: {
+      ...normalizeBookingRestriction({
+        ...restrictionSource,
+        events,
+        overrides,
+      }),
+      events,
+      overrides,
+    },
+    events,
+    overrides,
+  };
+}
+
+export function normalizeBookingRestrictionSummary(raw: unknown): BookingRestrictionSummary | null {
+  if (!isRecord(raw)) return null;
+
+  const level = pickString(raw, 'level', 'currentLevel', 'restrictionLevel', 'status') ?? 'NONE';
+  const status = pickString(raw, 'status', 'restrictionStatus');
+  const restricted = pickBoolean(raw, 'restricted', 'hasRestriction', 'isRestricted');
+  const clear =
+    pickBoolean(raw, 'clear', 'isClear') ??
+    (restricted === undefined ? level === 'NONE' || level === 'CLEAR' : !restricted);
+
+  return {
+    patientId: pickString(raw, 'patientId'),
+    monthlyScore:
+      pickNumericField(
+        raw,
+        'monthlyScore',
+        'currentMonthlyScore',
+        'currentScore',
+        'scoreSnapshot',
+        'score',
+        'points',
+      ) ?? 0,
+    level,
+    status,
+    restricted,
+    reason: pickString(raw, 'reason', 'latestReason', 'latestViolationReason') ?? pickString(raw, 'message'),
+    expiresAt: pickString(raw, 'expiresAt', 'restrictionExpiresAt'),
+    latestViolationType: pickString(raw, 'latestViolationType', 'latestEventType'),
+    latestViolationAt: pickString(raw, 'latestViolationAt', 'latestEventAt'),
+    message: pickString(raw, 'message'),
+    clear,
+  };
+}
+
+export function normalizeRateLimitRule(raw: unknown): RateLimitRule {
+  const item = isRecord(raw) ? raw : {};
+
+  return {
+    id: pickString(item, 'id') ?? '',
+    code: pickString(item, 'code') ?? '',
+    name: pickString(item, 'name') ?? '',
+    description: pickString(item, 'description'),
+    pathPattern: pickString(item, 'pathPattern', 'path_pattern') ?? '',
+    httpMethod: pickString(item, 'httpMethod', 'http_method') ?? '',
+    eventType: pickString(item, 'eventType', 'event_type') ?? '',
+    limitCount: pickNumericField(item, 'limitCount', 'limit_count') ?? 0,
+    windowSeconds: pickNumericField(item, 'windowSeconds', 'window_seconds') ?? 0,
+    bucketSeconds: pickNumericField(item, 'bucketSeconds', 'bucket_seconds') ?? 0,
+    enabled: pickBoolean(item, 'enabled') ?? false,
+    priority: pickNumericField(item, 'priority') ?? 0,
+    defaultLimitCount: pickNumericField(item, 'defaultLimitCount', 'default_limit_count') ?? 0,
+    defaultWindowSeconds:
+      pickNumericField(item, 'defaultWindowSeconds', 'default_window_seconds') ?? 0,
+    defaultBucketSeconds:
+      pickNumericField(item, 'defaultBucketSeconds', 'default_bucket_seconds') ?? 0,
+    defaultEnabled: pickBoolean(item, 'defaultEnabled', 'default_enabled') ?? false,
+    createdAt: pickString(item, 'createdAt', 'created_at'),
+    updatedAt: pickString(item, 'updatedAt', 'updated_at'),
+    updatedBy: pickString(item, 'updatedBy', 'updated_by', 'updatedByName', 'updated_by_name'),
+  };
+}
+
 function pickNumericField(item: Record<string, unknown>, ...keys: string[]): number | undefined {
   for (const key of keys) {
     const value = item[key];
@@ -500,6 +1064,68 @@ export function normalizeDoctorAppointmentSummary(raw: unknown): DoctorAppointme
 
 export function normalizeCashierSummary(raw: unknown): CashierSummary {
   const item = isRecord(raw) && isRecord(raw.summary) ? raw.summary : isRecord(raw) ? raw : {};
+  const legacyPaidRevenue =
+    pickNumericField(
+      item,
+      'paidRevenue',
+      'paidAmount',
+      'totalPaidAmount',
+      'revenuePaid',
+      'totalRevenue',
+      'revenue',
+    ) ?? 0;
+  const explicitGrossPaidRevenue = pickNumericField(
+    item,
+    'grossPaidRevenueInRange',
+    'gross_paid_revenue_in_range',
+    'grossPaidRevenue',
+    'gross_paid_revenue',
+    'grossRevenue',
+    'gross_revenue',
+    'totalPaidAmount',
+  );
+  const refundedAmountForPaidInvoices = pickNumericField(
+    item,
+    'refundedAmountForPaidInvoicesInRange',
+    'refunded_amount_for_paid_invoices_in_range',
+    'refundedAmountForPaidInvoices',
+    'refunded_amount_for_paid_invoices',
+  );
+  const refundedAmountInRange = pickNumericField(
+    item,
+    'refundedAmountInRange',
+    'refunded_amount_in_range',
+    'refundedAmount',
+    'refunded_amount',
+    'refundAmount',
+    'refund_amount',
+    'totalRefundedAmount',
+  );
+  const providedRefundedAmount = refundedAmountForPaidInvoices ?? refundedAmountInRange;
+  const explicitNetPaidRevenue = pickNumericField(
+    item,
+    'netPaidRevenueInRange',
+    'net_paid_revenue_in_range',
+    'netPaidRevenue',
+    'net_paid_revenue',
+    'netRevenue',
+    'net_revenue',
+    'revenueAfterRefund',
+    'revenue_after_refund',
+    'revenueAfterRefunds',
+  );
+  const grossBase = explicitGrossPaidRevenue ?? legacyPaidRevenue;
+  const netPaidRevenueInRange =
+    explicitNetPaidRevenue ??
+    (providedRefundedAmount !== undefined || explicitGrossPaidRevenue !== undefined
+      ? Math.max(0, grossBase - (providedRefundedAmount ?? 0))
+      : legacyPaidRevenue);
+  const grossPaidRevenueInRange =
+    explicitGrossPaidRevenue ??
+    (providedRefundedAmount !== undefined
+      ? netPaidRevenueInRange + providedRefundedAmount
+      : legacyPaidRevenue);
+  const refundedAmount = providedRefundedAmount ?? Math.max(0, grossPaidRevenueInRange - netPaidRevenueInRange);
 
   return {
     serviceOrdersWaiting:
@@ -534,16 +1160,18 @@ export function normalizeCashierSummary(raw: unknown): CashierSummary {
         'paymentPendingInvoices',
         'invoicesUnpaid',
       ) ?? 0,
-    paidRevenue:
-      pickNumericField(
-        item,
-        'paidRevenue',
-        'paidAmount',
-        'totalPaidAmount',
-        'revenuePaid',
-        'totalRevenue',
-        'revenue',
-      ) ?? 0,
+    paidRevenue: netPaidRevenueInRange,
+    grossPaidRevenueInRange,
+    refundedAmountForPaidInvoicesInRange: refundedAmount,
+    refundedAmountInRange: refundedAmount,
+    netPaidRevenueInRange,
+    refundsProcessedInRange: pickNumericField(
+      item,
+      'refundsProcessedInRange',
+      'refunds_processed_in_range',
+      'refundsProcessed',
+      'refunds_processed',
+    ),
   };
 }
 
@@ -563,28 +1191,83 @@ export function normalizeDoctorMasterDataSummary(raw: unknown): DoctorMasterData
   const item = isRecord(raw) && isRecord(raw.summary) ? raw.summary : isRecord(raw) ? raw : {};
 
   return {
-    total: pickNumericField(item, 'total', 'all', 'totalDoctors', 'doctorCount') ?? 0,
+    total: pickNumericField(item, 'total', 'all', 'totalDoctors', 'total_doctors', 'doctorCount', 'doctor_count'),
     activeDoctors:
-      pickNumericField(item, 'activeDoctors', 'active', 'activeCount', 'ACTIVE') ?? 0,
+      pickNumericField(item, 'activeDoctors', 'active_doctors', 'active', 'activeCount', 'active_count', 'ACTIVE'),
+    inactiveDoctors:
+      pickNumericField(item, 'inactiveDoctors', 'inactive_doctors', 'inactive', 'inactiveCount', 'inactive_count', 'INACTIVE'),
     noAccountDoctors:
       pickNumericField(
         item,
         'noAccountDoctors',
+        'no_account_doctors',
         'doctorsWithoutAccount',
+        'doctors_without_account',
         'withoutAccountDoctors',
+        'without_account_doctors',
         'noAccountCount',
+        'no_account_count',
         'withoutAccount',
-      ) ?? 0,
-    blockedDoctors:
+        'without_account',
+      ),
+    inactiveAccountDoctors:
       pickNumericField(
         item,
-        'blockedDoctors',
-        'blocked',
-        'blockedCount',
-        'dependencyBlocked',
-        'blockedByDependency',
-        'inactiveByDependency',
-      ) ?? 0,
+        'inactiveAccountDoctors',
+        'inactive_account_doctors',
+        'inactiveAccountsDoctors',
+        'inactive_accounts_doctors',
+        'doctorsWithInactiveAccount',
+        'doctors_with_inactive_account',
+        'doctorInactiveAccounts',
+        'doctor_inactive_accounts',
+        'inactiveAccountCount',
+        'inactive_account_count',
+        'inactiveAccounts',
+        'inactive_accounts',
+      ),
+    blockedAccountDoctors:
+      pickNumericField(
+        item,
+        'blockedAccountDoctors',
+        'blocked_account_doctors',
+        'doctorsWithBlockedAccount',
+        'doctors_with_blocked_account',
+        'blockedDoctorAccounts',
+        'blocked_doctor_accounts',
+        'blockedAccountCount',
+        'blocked_account_count',
+        'blockedAccounts',
+        'blocked_accounts',
+      ),
+    operationalReadyDoctors:
+      pickNumericField(
+        item,
+        'operationalReadyDoctors',
+        'operational_ready_doctors',
+        'readyDoctors',
+        'ready_doctors',
+        'readyForOperationDoctors',
+        'ready_for_operation_doctors',
+        'bookableDoctors',
+        'bookable_doctors',
+        'operationalReadyCount',
+        'operational_ready_count',
+      ),
+    notOperationalReadyDoctors:
+      pickNumericField(
+        item,
+        'notOperationalReadyDoctors',
+        'not_operational_ready_doctors',
+        'notReadyDoctors',
+        'not_ready_doctors',
+        'notReadyForOperationDoctors',
+        'not_ready_for_operation_doctors',
+        'notBookableDoctors',
+        'not_bookable_doctors',
+        'notOperationalReadyCount',
+        'not_operational_ready_count',
+      ),
   };
 }
 
@@ -592,18 +1275,55 @@ export function normalizeStaffMasterDataSummary(raw: unknown): StaffMasterDataSu
   const item = isRecord(raw) && isRecord(raw.summary) ? raw.summary : isRecord(raw) ? raw : {};
 
   return {
-    total: pickNumericField(item, 'total', 'all', 'totalStaffs', 'staffCount') ?? 0,
+    total: pickNumericField(item, 'total', 'all', 'totalStaffs', 'total_staffs', 'staffCount', 'staff_count'),
     activeStaffs:
-      pickNumericField(item, 'activeStaffs', 'active', 'activeCount', 'ACTIVE') ?? 0,
+      pickNumericField(item, 'activeStaffs', 'active_staffs', 'active', 'activeCount', 'active_count', 'ACTIVE'),
+    inactiveStaffs:
+      pickNumericField(item, 'inactiveStaffs', 'inactive_staffs', 'inactive', 'inactiveCount', 'inactive_count', 'INACTIVE'),
     noAccountStaffs:
       pickNumericField(
         item,
         'noAccountStaffs',
+        'no_account_staffs',
         'staffsWithoutAccount',
+        'staffs_without_account',
         'withoutAccountStaffs',
+        'without_account_staffs',
         'noAccountCount',
+        'no_account_count',
         'withoutAccount',
-      ) ?? 0,
+        'without_account',
+      ),
+    inactiveAccountStaffs:
+      pickNumericField(
+        item,
+        'inactiveAccountStaffs',
+        'inactive_account_staffs',
+        'inactiveAccountsStaffs',
+        'inactive_accounts_staffs',
+        'staffsWithInactiveAccount',
+        'staffs_with_inactive_account',
+        'staffInactiveAccounts',
+        'staff_inactive_accounts',
+        'inactiveAccountCount',
+        'inactive_account_count',
+        'inactiveAccounts',
+        'inactive_accounts',
+      ),
+    blockedAccountStaffs:
+      pickNumericField(
+        item,
+        'blockedAccountStaffs',
+        'blocked_account_staffs',
+        'staffsWithBlockedAccount',
+        'staffs_with_blocked_account',
+        'blockedStaffAccounts',
+        'blocked_staff_accounts',
+        'blockedAccountCount',
+        'blocked_account_count',
+        'blockedAccounts',
+        'blocked_accounts',
+      ),
   };
 }
 
@@ -632,10 +1352,193 @@ export function deriveCurrentUser(accessToken: string, identifier: string): Curr
   };
 }
 
+function normalizeDashboardRevenueFields(item: Record<string, unknown>) {
+  const legacyRevenue = pickNumericField(
+    item,
+    'totalRevenue',
+    'paidRevenue',
+    'paid_revenue',
+    'revenuePaid',
+    'revenue_paid',
+    'revenue',
+    'paidAmount',
+    'paid_amount',
+    'totalPaidAmount',
+    'value',
+    'amount',
+  );
+  const grossRevenue = pickNumericField(
+    item,
+    'grossRevenue',
+    'gross_revenue',
+    'grossPaidRevenue',
+    'gross_paid_revenue',
+    'grossPaidRevenueInRange',
+    'gross_paid_revenue_in_range',
+    'grossPaidAmount',
+    'gross_paid_amount',
+  );
+  const refundedAmount = pickNumericField(
+    item,
+    'refundedAmount',
+    'refunded_amount',
+    'refundAmount',
+    'refund_amount',
+    'refundedAmountInRange',
+    'refunded_amount_in_range',
+    'refundedAmountForPaidInvoicesInRange',
+    'refunded_amount_for_paid_invoices_in_range',
+    'totalRefundedAmount',
+    'total_refunded_amount',
+  );
+  const explicitNetRevenue = pickNumericField(
+    item,
+    'netRevenue',
+    'net_revenue',
+    'netPaidRevenue',
+    'net_paid_revenue',
+    'netPaidRevenueInRange',
+    'net_paid_revenue_in_range',
+    'revenueAfterRefund',
+    'revenue_after_refund',
+    'revenueAfterRefunds',
+    'revenue_after_refunds',
+  );
+  const netRevenue =
+    explicitNetRevenue ??
+    (grossRevenue !== undefined || refundedAmount !== undefined
+      ? Math.max(0, (grossRevenue ?? legacyRevenue ?? 0) - (refundedAmount ?? 0))
+      : (legacyRevenue ?? 0));
+
+  return {
+    totalRevenue: netRevenue,
+    grossRevenue: grossRevenue ?? (refundedAmount !== undefined ? netRevenue + refundedAmount : undefined),
+    refundedAmount,
+    netRevenue,
+    refundsProcessedInRange: pickNumericField(
+      item,
+      'refundsProcessedInRange',
+      'refunds_processed_in_range',
+      'refundsProcessed',
+      'refunds_processed',
+    ),
+  };
+}
+
+function normalizeDashboardPatientMetric(item: Record<string, unknown>) {
+  const uniquePatients = pickNumericField(
+    item,
+    'uniquePatientsInRange',
+    'unique_patients_in_range',
+    'totalUniquePatients',
+    'total_unique_patients',
+    'uniquePatients',
+    'unique_patients',
+  );
+
+  if (typeof uniquePatients === 'number') {
+    return {
+      totalPatientsToday: uniquePatients,
+      patientMetricLabel: 'Bệnh nhân',
+      patientMetricDescription: 'bệnh nhân duy nhất',
+      patientMetricSource: 'uniquePatients',
+    };
+  }
+
+  const explicitPatients = pickNumericField(
+    item,
+    'totalPatientsToday',
+    'total_patients_today',
+    'totalPatients',
+    'total_patients',
+  );
+
+  if (typeof explicitPatients === 'number') {
+    return {
+      totalPatientsToday: explicitPatients,
+      patientMetricLabel: 'Bệnh nhân',
+      patientMetricDescription: 'bệnh nhân',
+      patientMetricSource: 'totalPatients',
+    };
+  }
+
+  const totalEncounters = pickNumericField(
+    item,
+    'totalEncounters',
+    'total_encounters',
+    'encounters',
+    'encounterCount',
+    'encounter_count',
+  );
+
+  if (typeof totalEncounters === 'number') {
+    return {
+      totalPatientsToday: totalEncounters,
+      patientMetricLabel: 'Lượt khám',
+      patientMetricDescription: 'ca khám ghi nhận',
+      patientMetricSource: 'totalEncounters',
+    };
+  }
+
+  const arrivedAppointments = pickNumericField(
+    item,
+    'arrivedAppointments',
+    'arrived_appointments',
+    'arrived',
+    'arrivedCount',
+    'arrived_count',
+  ) ?? 0;
+
+  return {
+    totalPatientsToday: arrivedAppointments,
+    patientMetricLabel: 'Lượt tiếp nhận',
+    patientMetricDescription: 'lượt đã đến',
+    patientMetricSource: 'arrivedAppointments',
+  };
+}
+
+function normalizeDashboardValueSeries(value: unknown, revenue = false) {
+  if (!Array.isArray(value)) return [];
+
+  return value.map((entry) => {
+    const row = isRecord(entry) ? entry : {};
+    return {
+      date: String(row.date ?? row.label ?? ''),
+      value: revenue
+        ? normalizeDashboardRevenueFields(row).totalRevenue
+        : Number(row.value ?? row.count ?? 0),
+    };
+  });
+}
+
+function normalizeDashboardNameValueList(value: unknown) {
+  if (!Array.isArray(value)) return [];
+
+  return value.map((entry) => {
+    const row = isRecord(entry) ? entry : {};
+    return {
+      name: String(row.name ?? row.specialtyName ?? row.label ?? '—'),
+      value: normalizeDashboardRevenueFields(row).totalRevenue,
+    };
+  });
+}
+
+function normalizeDashboardStatusCounts(value: unknown): Record<string, number> {
+  if (!isRecord(value)) return {};
+
+  return Object.entries(value).reduce<Record<string, number>>((acc, [key, count]) => {
+    acc[key] = Number(count ?? 0);
+    return acc;
+  }, {});
+}
+
 export function normalizeDashboardOverview(raw: unknown): DashboardOverview {
   const fallback: DashboardOverview = {
     totalAppointmentsToday: 0,
     totalPatientsToday: 0,
+    patientMetricLabel: 'Lượt khám',
+    patientMetricDescription: 'ca khám ghi nhận',
+    patientMetricSource: 'totalEncounters',
     totalRevenue: 0,
     completionRate: 0,
     arrivedAppointments: 0,
@@ -654,25 +1557,20 @@ export function normalizeDashboardOverview(raw: unknown): DashboardOverview {
     return fallback;
   }
 
+  const resolvedRange = normalizeDashboardResolvedRange(raw);
+
   if ('today' in raw) {
     const today = isRecord(raw.today) ? raw.today : {};
     const appointmentSeries = Array.isArray(raw.appointmentSeries) ? raw.appointmentSeries : [];
     const revenueSeries = Array.isArray(raw.revenueSeries) ? raw.revenueSeries : [];
     const noShowSeries = Array.isArray(raw.noShowSeries) ? raw.noShowSeries : [];
-
-    const normalizeSeries = (series: unknown[]) =>
-      series.map((item) => {
-        const row = isRecord(item) ? item : {};
-        return {
-          date: String(row.date ?? row.label ?? ''),
-          value: Number(row.value ?? row.count ?? 0),
-        };
-      });
+    const revenueFields = normalizeDashboardRevenueFields(today);
+    const patientMetric = normalizeDashboardPatientMetric(today);
 
     return {
       totalAppointmentsToday: Number(today.totalAppointments ?? 0),
-      totalPatientsToday: Number(today.totalEncounters ?? today.arrivedAppointments ?? 0),
-      totalRevenue: Number(today.paidRevenue ?? 0),
+      ...patientMetric,
+      ...revenueFields,
       arrivedAppointments: Number(today.arrivedAppointments ?? 0),
       checkedInAppointments: Number(today.checkedInAppointments ?? 0),
       noShowAppointments: Number(today.noShowAppointments ?? 0),
@@ -693,28 +1591,57 @@ export function normalizeDashboardOverview(raw: unknown): DashboardOverview {
         NO_SHOW: Number(today.noShowAppointments ?? 0),
       },
       revenueBySpecialty: [],
-      appointmentsTrend: normalizeSeries(appointmentSeries).map((item) => ({
+      appointmentsTrend: normalizeDashboardValueSeries(appointmentSeries).map((item) => ({
         date: item.date,
         count: item.value,
       })),
-      revenueTrend: normalizeSeries(revenueSeries),
-      noShowTrend: normalizeSeries(noShowSeries),
+      revenueTrend: normalizeDashboardValueSeries(revenueSeries, true),
+      noShowTrend: normalizeDashboardValueSeries(noShowSeries),
+      resolvedRange,
     };
   }
 
-  if (
-    typeof raw.totalAppointmentsToday === 'number' &&
-    typeof raw.totalPatientsToday === 'number' &&
-    typeof raw.totalRevenue === 'number' &&
-    typeof raw.completionRate === 'number' &&
-    isRecord(raw.appointmentsByStatus) &&
-    Array.isArray(raw.revenueBySpecialty) &&
-    Array.isArray(raw.appointmentsTrend)
-  ) {
-    return raw as unknown as DashboardOverview;
+  const revenueFields = normalizeDashboardRevenueFields(raw);
+  const patientMetric = normalizeDashboardPatientMetric(raw);
+
+  return {
+    totalAppointmentsToday: pickNumericField(raw, 'totalAppointmentsToday', 'totalAppointments', 'appointments') ?? 0,
+    ...patientMetric,
+    ...revenueFields,
+    completionRate: pickNumericField(raw, 'completionRate', 'completion_rate') ?? 0,
+    arrivedAppointments: pickNumericField(raw, 'arrivedAppointments', 'arrived_appointments') ?? 0,
+    checkedInAppointments: pickNumericField(raw, 'checkedInAppointments', 'checked_in_appointments') ?? 0,
+    noShowAppointments: pickNumericField(raw, 'noShowAppointments', 'no_show_appointments') ?? 0,
+    inProgressEncounters: pickNumericField(raw, 'inProgressEncounters', 'in_progress_encounters') ?? 0,
+    waitingServiceItems: pickNumericField(raw, 'waitingServiceItems', 'waiting_service_items') ?? 0,
+    appointmentsByStatus: normalizeDashboardStatusCounts(raw.appointmentsByStatus),
+    revenueBySpecialty: normalizeDashboardNameValueList(raw.revenueBySpecialty),
+    appointmentsTrend: normalizeDashboardValueSeries(raw.appointmentsTrend).map((item) => ({
+      date: item.date,
+      count: item.value,
+    })),
+    revenueTrend: normalizeDashboardValueSeries(raw.revenueTrend, true),
+    noShowTrend: normalizeDashboardValueSeries(raw.noShowTrend),
+    resolvedRange,
+  };
+}
+
+function normalizeDashboardResolvedRange(raw: Record<string, unknown>) {
+  const candidates = [raw.resolvedRange, raw.dateRange, raw.range, raw];
+
+  for (const candidate of candidates) {
+    if (!isRecord(candidate)) continue;
+
+    const period = pickString(candidate, 'period');
+    const fromDate = pickString(candidate, 'fromDate', 'from', 'startDate', 'start_date');
+    const toDate = pickString(candidate, 'toDate', 'to', 'endDate', 'end_date');
+
+    if (period || fromDate || toDate) {
+      return { period, fromDate, toDate };
+    }
   }
 
-  return fallback;
+  return undefined;
 }
 
 function normalizeDashboardBreakdownItem(raw: unknown): DashboardBreakdownItem {
@@ -737,6 +1664,7 @@ export function normalizeDashboardBreakdown(raw: unknown): DashboardBreakdown {
     specialties: normalizeList(item.specialties),
     topDoctors: normalizeList(item.topDoctors),
     topServices: normalizeList(item.topServices),
+    resolvedRange: isRecord(raw) ? normalizeDashboardResolvedRange(raw) : undefined,
   };
 }
 
@@ -769,12 +1697,17 @@ export function normalizeDashboardKpis(raw: unknown): DashboardKpis {
     }),
     branchRevenue: toRecordList(item.branchRevenue).map((entry) => {
       const row = (entry ?? {}) as Record<string, unknown>;
+      const revenueFields = normalizeDashboardRevenueFields(row);
       return {
         branchId: row.branchId != null ? String(row.branchId) : undefined,
         branchName: String(row.branchName ?? '—'),
-        paidRevenue: Number(row.paidRevenue ?? 0),
+        paidRevenue: revenueFields.totalRevenue,
+        grossRevenue: revenueFields.grossRevenue,
+        refundedAmount: revenueFields.refundedAmount,
+        netRevenue: revenueFields.netRevenue,
       };
     }),
+    resolvedRange: isRecord(raw) ? normalizeDashboardResolvedRange(raw) : undefined,
   };
 }
 
@@ -783,10 +1716,18 @@ export function normalizeBranch(raw: unknown): Branch {
   return {
     id: String(item.id ?? ''),
     code: typeof item.code === 'string' ? item.code : undefined,
+    nameVn: typeof item.nameVn === 'string' ? item.nameVn : undefined,
+    nameEn: typeof item.nameEn === 'string' ? item.nameEn : undefined,
     name: pickLocalizedField(item, 'nameVn', 'nameEn', 'name'),
+    addressVn: typeof item.addressVn === 'string' ? item.addressVn : undefined,
+    addressEn: typeof item.addressEn === 'string' ? item.addressEn : undefined,
     address: pickLocalizedField(item, 'addressVn', 'addressEn', 'address'),
     phone: String(item.phone ?? ''),
     email: String(item.email ?? ''),
+    descriptionVn:
+      typeof item.descriptionVn === 'string' ? item.descriptionVn : undefined,
+    descriptionEn:
+      typeof item.descriptionEn === 'string' ? item.descriptionEn : undefined,
     description: pickLocalizedField(item, 'descriptionVn', 'descriptionEn', 'description'),
     imageUrl: sanitizeMediaUrl(item.imageUrl),
     status: String(item.status ?? ''),
@@ -798,7 +1739,14 @@ export function normalizeSpecialty(raw: unknown): Specialty {
   const item = (raw ?? {}) as Record<string, unknown>;
   return {
     id: String(item.id ?? ''),
+    code: typeof item.code === 'string' ? item.code : undefined,
+    nameVn: typeof item.nameVn === 'string' ? item.nameVn : undefined,
+    nameEn: typeof item.nameEn === 'string' ? item.nameEn : undefined,
     name: pickLocalizedField(item, 'nameVn', 'nameEn', 'name'),
+    descriptionVn:
+      typeof item.descriptionVn === 'string' ? item.descriptionVn : undefined,
+    descriptionEn:
+      typeof item.descriptionEn === 'string' ? item.descriptionEn : undefined,
     description: pickLocalizedField(item, 'descriptionVn', 'descriptionEn', 'description'),
     iconUrl: sanitizeMediaUrl(item.iconUrl),
     imageUrl: sanitizeMediaUrl(item.imageUrl),
@@ -806,35 +1754,142 @@ export function normalizeSpecialty(raw: unknown): Specialty {
   };
 }
 
+function normalizeDoctorPublicSpecialty(raw: unknown): DoctorPublicSpecialty | null {
+  if (!isRecord(raw)) return null;
+
+  const id = pickIdField(raw, 'specialtyId', 'specialty_id', 'id');
+  if (!id) return null;
+
+  return {
+    id,
+    code: pickStringField(raw, 'specialtyCode', 'specialty_code', 'code'),
+    name: pickLocalizedField(
+      raw,
+      'specialtyNameVn',
+      'specialtyNameEn',
+      'nameVn',
+      'nameEn',
+      'specialtyName',
+      'specialty_name',
+      'name',
+    ),
+    status: pickStringField(raw, 'status'),
+    effectiveStatus: pickStringField(raw, 'effectiveStatus', 'effective_status'),
+    inactiveReason: pickStringField(raw, 'inactiveReason', 'inactive_reason'),
+    bookable: pickBooleanField(raw, 'bookable'),
+  };
+}
+
+function readArrayPayload(value: unknown): unknown[] | undefined {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = parseJsonString<unknown[]>(value);
+    if (Array.isArray(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function normalizeDoctorPublicSpecialties(item: Record<string, unknown>) {
+  const publicSpecialtiesPayload = readArrayPayload(
+    pickJsonValue(
+      item,
+      'publicSpecialties',
+      'public_specialties',
+      'bookableSpecialties',
+      'bookable_specialties',
+      'publicSpecialtyOptions',
+      'public_specialty_options',
+    ),
+  );
+
+  if (publicSpecialtiesPayload) {
+    return publicSpecialtiesPayload
+      .map(normalizeDoctorPublicSpecialty)
+      .filter((specialty): specialty is DoctorPublicSpecialty => Boolean(specialty));
+  }
+
+  const genericSpecialtiesPayload = readArrayPayload(
+    pickJsonValue(item, 'specialties', 'doctorSpecialties', 'doctor_specialties'),
+  );
+  const genericRecords = genericSpecialtiesPayload?.filter(isRecord) ?? [];
+  if (!genericRecords.length) return undefined;
+
+  return genericRecords
+    .map(normalizeDoctorPublicSpecialty)
+    .filter((specialty): specialty is DoctorPublicSpecialty => Boolean(specialty));
+}
+
 export function normalizeDoctor(raw: unknown): Doctor {
   const item = (raw ?? {}) as Record<string, unknown>;
-  const specialtyIds = Array.isArray(item.specialtyIds) ? item.specialtyIds : [];
+  const publicSpecialties = normalizeDoctorPublicSpecialties(item);
+  const rawLegacySpecialtyIds = item.specialtyIds ?? item.specialty_ids;
+  const legacySpecialtyIds = Array.isArray(rawLegacySpecialtyIds)
+    ? rawLegacySpecialtyIds
+        .map((value) => (value !== null && typeof value !== 'undefined' ? String(value).trim() : ''))
+        .filter(Boolean)
+    : normalizeStringArray(rawLegacySpecialtyIds) ?? [];
+  const fallbackSpecialtyId = pickStringField(item, 'specialtyId', 'specialty_id');
+  const specialtyIds =
+    publicSpecialties !== undefined
+      ? publicSpecialties.map((specialty) => specialty.id)
+      : legacySpecialtyIds.length
+        ? legacySpecialtyIds
+        : fallbackSpecialtyId
+          ? [fallbackSpecialtyId]
+          : [];
   const supportedLanguages = normalizeStringArray(item.supportedLanguages ?? item.supportedLanguagesJson);
   const featuredServices = normalizeStringArray(item.featuredServices ?? item.featuredServicesJson);
   const careerTimeline = normalizeCareerTimeline(item.careerTimeline ?? item.careerTimelineJson);
+  const hasAccount = pickBooleanField(item, 'hasAccount', 'has_account');
+  const accountEmail = typeof item.accountEmail === 'string' ? item.accountEmail : undefined;
+  const accountPhone = typeof item.accountPhone === 'string' ? item.accountPhone : undefined;
+  const accountStatus = pickStringField(item, 'accountStatus', 'account_status');
 
   return {
     id: String(item.id ?? ''),
+    code: typeof item.code === 'string' ? item.code : undefined,
     fullName: String(item.fullName ?? ''),
+    displayTitleVn:
+      typeof item.displayTitleVn === 'string' ? item.displayTitleVn : undefined,
+    displayTitleEn:
+      typeof item.displayTitleEn === 'string' ? item.displayTitleEn : undefined,
     title: pickLocalizedField(item, 'displayTitleVn', 'displayTitleEn', 'title'),
     avatarUrl: sanitizeMediaUrl(item.avatarUrl),
+    bioVn: typeof item.bioVn === 'string' ? item.bioVn : undefined,
+    bioEn: typeof item.bioEn === 'string' ? item.bioEn : undefined,
     bio: pickLocalizedField(item, 'bioVn', 'bioEn', 'bio'),
+    expertiseVn:
+      typeof item.expertiseVn === 'string' ? item.expertiseVn : undefined,
+    expertiseEn:
+      typeof item.expertiseEn === 'string' ? item.expertiseEn : undefined,
     expertise: pickLocalizedField(item, 'expertiseVn', 'expertiseEn', 'expertise'),
     yearsOfExperience: Number(item.yearsExp ?? item.yearsOfExperience ?? 0),
-    specialtyId: String(specialtyIds[0] ?? item.specialtyId ?? ''),
-    specialtyIds: specialtyIds.map((value) => String(value)),
-    specialtyName: pickLocalizedField(item, 'specialtyNameVn', 'specialtyNameEn', 'specialtyName'),
+    specialtyId: specialtyIds[0] ?? '',
+    specialtyIds,
+    specialtyName:
+      publicSpecialties?.find((specialty) => specialty.name)?.name ??
+      pickLocalizedField(item, 'specialtyNameVn', 'specialtyNameEn', 'specialtyName'),
+    publicSpecialties,
     branchId: String(item.branchId ?? ''),
     branchName: pickLocalizedField(item, 'branchNameVn', 'branchNameEn', 'branchName'),
+    educationVn:
+      typeof item.educationVn === 'string' ? item.educationVn : undefined,
+    educationEn:
+      typeof item.educationEn === 'string' ? item.educationEn : undefined,
     education: pickLocalizedField(item, 'educationVn', 'educationEn', 'education'),
+    achievementsVn:
+      typeof item.achievementsVn === 'string' ? item.achievementsVn : undefined,
+    achievementsEn:
+      typeof item.achievementsEn === 'string' ? item.achievementsEn : undefined,
     achievements: pickLocalizedField(item, 'achievementsVn', 'achievementsEn', 'achievements'),
     status: String(item.status ?? 'ACTIVE'),
     effectiveStatus:
       typeof item.effectiveStatus === 'string' ? item.effectiveStatus : undefined,
     inactiveReason:
       typeof item.inactiveReason === 'string' ? item.inactiveReason : undefined,
-    bookable:
-      typeof item.bookable === 'boolean' ? item.bookable : undefined,
+    operationalReady: pickBooleanField(item, 'operationalReady', 'operational_ready'),
+    bookable: pickBooleanField(item, 'bookable'),
+    notReadyReason: pickStringField(item, 'notReadyReason', 'not_ready_reason'),
     nextAvailableDate:
       typeof item.nextAvailableDate === 'string' ? item.nextAvailableDate : undefined,
     hasUpcomingSchedule:
@@ -855,6 +1910,47 @@ export function normalizeDoctor(raw: unknown): Doctor {
     featuredServices,
     careerTimeline,
     updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : undefined,
+    hasAccount,
+    accountId:
+      typeof item.accountId !== 'undefined' && item.accountId !== null
+        ? String(item.accountId)
+        : undefined,
+    accountEmail,
+    accountPhone,
+    accountRole:
+      typeof item.accountRole === 'string' ? item.accountRole : undefined,
+    accountStatus,
+  };
+}
+
+export function normalizeDoctorOption(raw: unknown): DoctorOption {
+  const item = (raw ?? {}) as Record<string, unknown>;
+  const rawSpecialtyIds = normalizeStringArray(item.specialtyIds ?? item.specialty_ids);
+  const rawSpecialtyNames = normalizeStringArray(
+    item.specialtyNames ?? item.specialty_names ?? item.specialties,
+  );
+  const fallbackSpecialtyId = pickStringField(item, 'specialtyId', 'specialty_id');
+  const fallbackSpecialtyName = pickStringField(
+    item,
+    'specialtyName',
+    'specialty_name',
+    'specialtyNameVn',
+    'specialtyNameEn',
+  );
+
+  return {
+    id: String(item.id ?? item.doctorId ?? item.doctor_id ?? ''),
+    fullName: String(item.fullName ?? item.doctorName ?? item.name ?? ''),
+    branchId: pickStringField(item, 'branchId', 'branch_id'),
+    branchName: pickStringField(item, 'branchName', 'branch_name', 'branchNameVn', 'branchNameEn'),
+    specialtyIds: rawSpecialtyIds ?? (fallbackSpecialtyId ? [fallbackSpecialtyId] : undefined),
+    specialtyNames: rawSpecialtyNames ?? (fallbackSpecialtyName ? [fallbackSpecialtyName] : undefined),
+    profileStatus: pickStringField(item, 'profileStatus', 'profile_status', 'status'),
+    hasAccount: pickBooleanField(item, 'hasAccount', 'has_account'),
+    accountStatus: pickStringField(item, 'accountStatus', 'account_status'),
+    operationalReady: pickBooleanField(item, 'operationalReady', 'operational_ready'),
+    bookable: pickBooleanField(item, 'bookable'),
+    notReadyReason: pickStringField(item, 'notReadyReason', 'not_ready_reason'),
   };
 }
 
@@ -891,7 +1987,7 @@ export function normalizeMedicalService(raw: unknown): MedicalService {
     requiresNumericResult:
       typeof item.requiresNumericResult === 'boolean' ? item.requiresNumericResult : undefined,
     resultTemplateCode:
-      typeof item.resultTemplateCode === 'string' ? item.resultTemplateCode : undefined,
+      typeof item.resultTemplateCode === 'string' ? (item.resultTemplateCode as ServiceResultTemplateCode) : undefined,
     resultTemplateSchemaJson:
       typeof item.resultTemplateSchemaJson === 'string'
         ? item.resultTemplateSchemaJson
@@ -982,6 +2078,9 @@ export function normalizePublicFaq(raw: unknown): PublicFaqItem {
 
 export function normalizeAppointment(raw: unknown): Appointment {
   const item = (raw ?? {}) as Record<string, unknown>;
+  const etaStart = pickString(item, 'etaStart', 'eta_start');
+  const etaEnd = pickString(item, 'etaEnd', 'eta_end');
+
   return {
     id: String(item.id ?? ''),
     code: String(item.code ?? ''),
@@ -993,8 +2092,94 @@ export function normalizeAppointment(raw: unknown): Appointment {
     patientNote: typeof item.patientNote === 'string' ? item.patientNote : undefined,
     reasonForVisit: typeof item.reasonForVisit === 'string' ? item.reasonForVisit : undefined,
     visitType: typeof item.visitType === 'string' ? item.visitType : undefined,
-    triagePriority: typeof item.triagePriority === 'string' ? item.triagePriority : undefined,
-    triageNote: typeof item.triageNote === 'string' ? item.triageNote : undefined,
+    preTriageLevel: normalizeOptionalEnum(item.preTriageLevel, PRE_TRIAGE_LEVELS),
+    preTriagePriority: normalizeOptionalEnum(item.preTriagePriority, TRIAGE_PRIORITIES),
+    preTriageFlags: normalizeStringArray(item.preTriageFlags ?? item.pre_triage_flags) ?? null,
+    preTriageReasons:
+      normalizeStringArray(item.preTriageReasons ?? item.pre_triage_reasons) ?? null,
+    preTriageSummary:
+      typeof item.preTriageSummary === 'string'
+        ? item.preTriageSummary
+        : typeof item.pre_triage_summary === 'string'
+          ? item.pre_triage_summary
+          : null,
+    preTriageAssessedAt:
+      typeof item.preTriageAssessedAt === 'string'
+        ? item.preTriageAssessedAt
+        : typeof item.pre_triage_assessed_at === 'string'
+          ? item.pre_triage_assessed_at
+          : null,
+    symptomOnset: normalizeOptionalEnum(item.symptomOnset, SYMPTOM_ONSETS),
+    chronicConditions: normalizeEnumArray(item.chronicConditions, CHRONIC_CONDITIONS),
+    chronicConditionOthers:
+      normalizeStringArray(item.chronicConditionOthers ?? item.chronic_condition_others) ?? [],
+    functionalImpact: normalizeOptionalEnum(item.functionalImpact, FUNCTIONAL_IMPACTS),
+    redFlagSelections:
+      normalizeEnumArray(item.redFlagSelections ?? item.redFlags, RED_FLAGS),
+    preTriageMatchedTerms:
+      normalizeMatchedTerms(item.preTriageMatchedTerms ?? item.pre_triage_matched_terms),
+    preTriageMatchedRules:
+      normalizeMatchedRules(item.preTriageMatchedRules ?? item.pre_triage_matched_rules),
+    preTriageSource:
+      normalizeOptionalEnum(item.preTriageSource ?? item.pre_triage_source, PRE_TRIAGE_SOURCES) ??
+      (typeof item.preTriageSource === 'string'
+        ? item.preTriageSource
+        : typeof item.pre_triage_source === 'string'
+          ? item.pre_triage_source
+          : null),
+    preTriageConfidenceLevel:
+      normalizeOptionalEnum(
+        item.preTriageConfidenceLevel ?? item.pre_triage_confidence_level,
+        CONFIDENCE_LEVELS,
+      ) ??
+      (typeof item.preTriageConfidenceLevel === 'string'
+        ? item.preTriageConfidenceLevel
+        : typeof item.pre_triage_confidence_level === 'string'
+          ? item.pre_triage_confidence_level
+          : null),
+    preTriageKnowledgeBaseVersion:
+      typeof item.preTriageKnowledgeBaseVersion === 'string'
+        ? item.preTriageKnowledgeBaseVersion
+        : typeof item.pre_triage_knowledge_base_version === 'string'
+          ? item.pre_triage_knowledge_base_version
+          : null,
+    preTriageRulesetVersion:
+      typeof item.preTriageRulesetVersion === 'string'
+        ? item.preTriageRulesetVersion
+        : typeof item.pre_triage_ruleset_version === 'string'
+          ? item.pre_triage_ruleset_version
+          : null,
+    preTriageAiModelVersion:
+      typeof item.preTriageAiModelVersion === 'string'
+        ? item.preTriageAiModelVersion
+        : typeof item.pre_triage_ai_model_version === 'string'
+          ? item.pre_triage_ai_model_version
+          : null,
+    triagePriority: typeof item.triagePriority === 'string' ? item.triagePriority : null,
+    triageNote: typeof item.triageNote === 'string' ? item.triageNote : null,
+    triageReviewStatus: normalizeOptionalEnum(
+      item.triageReviewStatus ?? item.triage_review_status,
+      TRIAGE_REVIEW_STATUSES,
+    ),
+    triageOverrideReason:
+      typeof item.triageOverrideReason === 'string'
+        ? item.triageOverrideReason
+        : typeof item.triage_override_reason === 'string'
+          ? item.triage_override_reason
+          : null,
+    triageReviewedByName:
+      typeof item.triageReviewedByName === 'string'
+        ? item.triageReviewedByName
+        : typeof item.triage_reviewed_by_name === 'string'
+          ? item.triage_reviewed_by_name
+          : null,
+    triageReviewedAt:
+      typeof item.triageReviewedAt === 'string'
+        ? item.triageReviewedAt
+        : typeof item.triage_reviewed_at === 'string'
+          ? item.triage_reviewed_at
+          : null,
+    triageAuditLogs: normalizeTriageAuditLogs(item.triageAuditLogs ?? item.triage_audit_logs),
     insuranceNote: typeof item.insuranceNote === 'string' ? item.insuranceNote : undefined,
     emergencyContactName:
       typeof item.emergencyContactName === 'string' ? item.emergencyContactName : undefined,
@@ -1012,6 +2197,26 @@ export function normalizeAppointment(raw: unknown): Appointment {
       typeof item.intakeCompletedAt === 'string' ? item.intakeCompletedAt : undefined,
     intakeCompletedByName:
       typeof item.intakeCompletedByName === 'string' ? item.intakeCompletedByName : undefined,
+    bookingRestrictionSummary: normalizeBookingRestrictionSummary(
+      item.bookingRestrictionSummary ??
+      item.bookingRiskSummary ??
+      item.restrictionSummary ??
+      item.bookingRestriction,
+    ),
+    contactStatus: pickString(item, 'contactStatus', 'phoneContactStatus'),
+    patientResponseStatus: pickString(item, 'patientResponseStatus', 'responseStatus'),
+    lastCallOutcome: pickString(item, 'lastCallOutcome', 'callOutcome'),
+    lastCallAt: pickString(item, 'lastCallAt', 'lastCalledAt', 'callOutcomeAt'),
+    lastCallNote: pickString(item, 'lastCallNote', 'callNote'),
+    lastCallByName: pickString(item, 'lastCallByName', 'lastCalledByName', 'callOutcomeByName'),
+    lastPatientResponseAt: pickString(item, 'lastPatientResponseAt', 'patientRespondedAt'),
+    fallbackEmailSentAt: pickString(item, 'fallbackEmailSentAt', 'contactFallbackEmailSentAt'),
+    canRecordCallOutcome: pickBoolean(item, 'canRecordCallOutcome', 'canRecordCallResult'),
+    canSendFallbackEmail: pickBoolean(item, 'canSendFallbackEmail', 'canSendContactFallbackEmail'),
+    canMarkWrongContact: pickBoolean(item, 'canMarkWrongContact', 'canCreateWrongContactViolation'),
+    contactSupportedActions:
+      normalizeStringArray(item.contactSupportedActions ?? item.contactActions ?? item.supportedContactActions) ??
+      undefined,
     doctorId: String(item.doctorId ?? ''),
     doctorName: pickLocalizedField(item, 'doctorNameVn', 'doctorNameEn', 'doctorName'),
     branchId: String(item.branchId ?? ''),
@@ -1020,8 +2225,10 @@ export function normalizeAppointment(raw: unknown): Appointment {
     specialtyName: pickLocalizedField(item, 'specialtyNameVn', 'specialtyNameEn', 'specialtyName'),
     visitDate: String(item.visitDate ?? ''),
     session: normalizeScheduleSession(item.session),
-    slotStart: formatTimeDisplay(item.etaStart ?? item.slotStart ?? ''),
-    slotEnd: typeof item.etaEnd !== 'undefined' ? formatTimeDisplay(item.etaEnd) : undefined,
+    slotStart: formatTimeDisplay(etaStart ?? item.slotStart ?? ''),
+    slotEnd: formatTimeDisplay(etaEnd ?? item.slotEnd ?? item.endTime) || undefined,
+    etaStart,
+    etaEnd,
     status: normalizeAppointmentStatus(item.status),
     claimedBy: typeof item.processingByName === 'string' ? item.processingByName : undefined,
     processingById:
@@ -1047,6 +2254,8 @@ export function normalizeAppointment(raw: unknown): Appointment {
     checkedInAt: typeof item.checkedInAt === 'string' ? item.checkedInAt : undefined,
     checkedInByName:
       typeof item.checkedInByName === 'string' ? item.checkedInByName : undefined,
+    checkedInLate: pickBooleanField(item, 'checkedInLate', 'checked_in_late'),
+    lateMinutes: pickNumberField(item, 'lateMinutes', 'late_minutes'),
     confirmedAt: typeof item.confirmedAt === 'string' ? item.confirmedAt : undefined,
     confirmedByName:
       typeof item.confirmedByName === 'string' ? item.confirmedByName : undefined,
@@ -1055,7 +2264,43 @@ export function normalizeAppointment(raw: unknown): Appointment {
     noShowMarkedByName:
       typeof item.noShowMarkedByName === 'string' ? item.noShowMarkedByName : undefined,
     followUpPending: Boolean(item.followUpPending),
+    followUpType: pickString(item, 'followUpType', 'follow_up_type') ?? null,
+    doctorCancellationHoldStatus:
+      pickString(item, 'doctorCancellationHoldStatus', 'holdStatus', 'hold_status') ?? null,
+    doctorCancellationHoldExpiresAt:
+      pickString(
+        item,
+        'doctorCancellationHoldExpiresAt',
+        'doctor_cancellation_hold_expires_at',
+        'holdExpiresAt',
+        'expiresAt',
+      ) ?? null,
+    doctorCancellationHeldSlotStart:
+      formatTimeDisplay(
+        item.doctorCancellationHeldSlotStart ?? item.heldSlotStart ?? item.proposedSlotStart,
+      ) || null,
+    doctorCancellationHeldSlotEnd:
+      formatTimeDisplay(
+        item.doctorCancellationHeldSlotEnd ?? item.heldSlotEnd ?? item.proposedSlotEnd,
+      ) || null,
+    doctorCancellationHeldDoctorName:
+      pickString(item, 'doctorCancellationHeldDoctorName', 'heldDoctorName', 'proposedDoctorName') ??
+      null,
+    doctorCancellationOriginalSlotStart:
+      formatTimeDisplay(
+        item.doctorCancellationOriginalSlotStart ?? item.originalSlotStart ?? item.slotStart,
+      ) || null,
+    doctorCancellationOriginalSlotEnd:
+      formatTimeDisplay(item.doctorCancellationOriginalSlotEnd ?? item.originalSlotEnd ?? item.slotEnd) ||
+      null,
     noShowNote: typeof item.noShowNote === 'string' ? item.noShowNote : undefined,
+    canMarkNoShow:
+      typeof item.canMarkNoShow === 'boolean' ? item.canMarkNoShow : undefined,
+    noShowGraceMinutes: pickNumberField(item, 'noShowGraceMinutes', 'no_show_grace_minutes'),
+    noShowEligibleAt:
+      typeof item.noShowEligibleAt === 'string' ? item.noShowEligibleAt : undefined,
+    noShowBlockedReason:
+      typeof item.noShowBlockedReason === 'string' ? item.noShowBlockedReason : undefined,
     rescheduledFromAppointmentId:
       typeof item.rescheduledFromAppointmentId !== 'undefined' &&
       item.rescheduledFromAppointmentId !== null
@@ -1165,43 +2410,36 @@ export function normalizeBranchSpecialty(raw: unknown) {
 
 export function normalizeAuditLog(raw: unknown): AuditLog {
   const item = (raw ?? {}) as Record<string, unknown>;
+  const actorId = pickString(item, 'actorId', 'actor_id', 'userId', 'user_id');
+  const actorEmail = pickString(item, 'actorEmail', 'actor_email', 'email');
+  const actorName = pickString(item, 'actorName', 'actor_name', 'actorFullName', 'userName');
+  const entity = pickString(item, 'entity', 'entityType', 'entity_type', 'targetType', 'target_type') ?? '';
+  const entityId = pickString(item, 'entityId', 'entity_id', 'targetId', 'target_id') ?? '';
+
   return {
-    id: String(item.id ?? ''),
-    actor: String(item.actorName ?? item.actorId ?? item.actor ?? ''),
-    actorId:
-      typeof item.actorId !== 'undefined' ? String(item.actorId) : undefined,
-    actorName:
-      typeof item.actorName === 'string'
-        ? item.actorName
-        : typeof item.actorId !== 'undefined'
-          ? String(item.actorId)
-          : undefined,
-    actorRole: typeof item.actorRole === 'string' ? item.actorRole : undefined,
+    id: String(item.id ?? item.eventId ?? item.event_id ?? ''),
+    eventId: pickString(item, 'eventId', 'event_id'),
+    actor: pickString(item, 'actor') ?? actorName ?? actorEmail ?? actorId ?? '',
+    actorId,
+    actorName,
+    actorEmail,
+    actorRole: pickString(item, 'actorRole', 'actor_role', 'role'),
     action: String(item.action ?? ''),
-    entityType: String(item.entityType ?? item.entity ?? ''),
-    entityId: typeof item.entityId !== 'undefined' ? String(item.entityId) : '',
-    targetType:
-      typeof item.targetType === 'string'
-        ? item.targetType
-        : typeof item.entity === 'string'
-          ? item.entity
-          : undefined,
-    targetId:
-      typeof item.targetId !== 'undefined'
-        ? String(item.targetId)
-        : typeof item.entityId !== 'undefined'
-          ? String(item.entityId)
-          : undefined,
+    entity,
+    entityType: entity,
+    entityId,
+    targetType: (pickString(item, 'targetType', 'target_type') ?? entity) || undefined,
+    targetId: (pickString(item, 'targetId', 'target_id') ?? entityId) || undefined,
     description: typeof item.description === 'string' ? item.description : undefined,
     metadata:
       item.metadata && typeof item.metadata === 'object'
         ? (item.metadata as Record<string, unknown>)
         : undefined,
-    beforeJson: typeof item.beforeJson === 'string' ? item.beforeJson : undefined,
-    afterJson: typeof item.afterJson === 'string' ? item.afterJson : undefined,
-    ipAddress: typeof item.ipAddress === 'string' ? item.ipAddress : undefined,
-    userAgent: typeof item.userAgent === 'string' ? item.userAgent : undefined,
-    createdAt: typeof item.createdAt === 'string' ? item.createdAt : String(item.createdAt ?? ''),
+    beforeJson: pickJsonValue(item, 'beforeJson', 'before_json', 'before'),
+    afterJson: pickJsonValue(item, 'afterJson', 'after_json', 'after'),
+    ipAddress: pickString(item, 'ipAddress', 'ip_address'),
+    userAgent: pickString(item, 'userAgent', 'user_agent'),
+    createdAt: pickString(item, 'createdAt', 'created_at') ?? '',
   };
 }
 
@@ -1238,11 +2476,27 @@ export function normalizePatient(raw: unknown) {
           ? item.patientGender
           : undefined,
     address: typeof item.address === 'string' ? item.address : undefined,
+    bloodType: typeof item.bloodType === 'string' ? item.bloodType : undefined,
+    ethnicity: typeof item.ethnicity === 'string' ? item.ethnicity : undefined,
+    nationality: typeof item.nationality === 'string' ? item.nationality : undefined,
+    occupation: typeof item.occupation === 'string' ? item.occupation : undefined,
+    province: typeof item.province === 'string' ? item.province : undefined,
+    district: typeof item.district === 'string' ? item.district : undefined,
+    ward: typeof item.ward === 'string' ? item.ward : undefined,
+    avatarUrl: sanitizeMediaUrl(item.avatarUrl),
     identityNumber:
       typeof item.identityNumber === 'string' ? item.identityNumber : undefined,
     insuranceNumber:
       typeof item.insuranceNumber === 'string'
         ? item.insuranceNumber
+        : undefined,
+    insuranceExpiryDate:
+      typeof item.insuranceExpiryDate === 'string'
+        ? item.insuranceExpiryDate
+        : undefined,
+    insuranceRegisteredHospital:
+      typeof item.insuranceRegisteredHospital === 'string'
+        ? item.insuranceRegisteredHospital
         : undefined,
     emergencyContactName:
       typeof item.emergencyContactName === 'string'
@@ -1254,6 +2508,7 @@ export function normalizePatient(raw: unknown) {
         : undefined,
     allergyNote:
       typeof item.allergyNote === 'string' ? item.allergyNote : undefined,
+    allergies: Array.isArray(item.allergies) ? item.allergies : undefined,
     chronicDiseaseNote:
       typeof item.chronicDiseaseNote === 'string'
         ? item.chronicDiseaseNote
@@ -1312,6 +2567,13 @@ export function normalizeLeaveRequest(raw: unknown) {
         ? item.reviewedByName
         : undefined,
     createdAt: typeof item.createdAt === 'string' ? item.createdAt : undefined,
+    updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : undefined,
+    affectedAppointmentCount: pickNumberField(
+      item,
+      'affectedAppointmentCount',
+      'affectedAppointments',
+    ),
+    recoverySummary: normalizeRecoverySummary(item.recoverySummary ?? item.doctorCancellationRecoverySummary),
   };
 }
 
@@ -1460,7 +2722,10 @@ export function normalizeMedicationBatch(raw: unknown): MedicationBatch {
   return {
     id: batchId,
     batchId,
-    batchCode: pickStringField(item, 'batchCode', 'batch_code', 'code') ?? batchId,
+    batchNumber: pickStringField(item, 'batchNumber', 'batch_number'),
+    batchCode:
+      pickStringField(item, 'batchNumber', 'batch_number', 'batchCode', 'batch_code', 'code') ??
+      batchId,
     ...medicationFields,
     quantity:
       pickNumberField(
@@ -1504,10 +2769,14 @@ export function normalizeAdminSpecialty(raw: unknown) {
   return {
     id: String(item.id ?? ''),
     code: typeof item.code === 'string' ? item.code : undefined,
+    nameVn: typeof item.nameVn === 'string' ? item.nameVn : undefined,
+    nameEn: typeof item.nameEn === 'string' ? item.nameEn : undefined,
     name: pickLocalizedField(item, 'nameVn', 'nameEn', 'name'),
-    description: String(
-      item.descriptionVn ?? item.description ?? item.descriptionEn ?? '',
-    ),
+    descriptionVn:
+      typeof item.descriptionVn === 'string' ? item.descriptionVn : undefined,
+    descriptionEn:
+      typeof item.descriptionEn === 'string' ? item.descriptionEn : undefined,
+    description: pickLocalizedField(item, 'descriptionVn', 'descriptionEn', 'description'),
     iconUrl: sanitizeMediaUrl(item.iconUrl),
     status: String(item.status ?? 'ACTIVE'),
     defaultSlotMinutes:
@@ -1642,9 +2911,22 @@ export function normalizePrescription(raw: unknown) {
     encounterCode: typeof item.encounterCode === 'string' ? item.encounterCode : undefined,
     doctorUserId:
       typeof item.doctorUserId !== 'undefined' ? String(item.doctorUserId) : undefined,
+    patientName: pickStringField(item, 'patientName', 'patient_name', 'patientFullName', 'patient_full_name'),
+    doctorName: pickStringField(item, 'doctorName', 'doctor_name', 'doctorFullName', 'doctor_full_name'),
     issuedDate: typeof item.issuedDate === 'string' ? item.issuedDate : undefined,
     generalNote: typeof item.generalNote === 'string' ? item.generalNote : undefined,
     status: normalizePrescriptionStatus(item.status),
+    invoiceId:
+      typeof item.invoiceId !== 'undefined' && item.invoiceId !== null
+        ? String(item.invoiceId)
+        : undefined,
+    invoiceCode:
+      typeof item.invoiceCode === 'string' ? item.invoiceCode : undefined,
+    paymentUrl:
+      pickStringField(item, 'paymentUrl', 'payment_url', 'vnpPaymentUrl', 'vnp_payment_url'),
+    paymentRoute:
+      pickStringField(item, 'paymentRoute', 'payment_route', 'route', 'actionUrl', 'action_url'),
+    canDispense: typeof item.canDispense === 'boolean' ? item.canDispense : undefined,
     items: rawItems.map((x) => {
       const row = (x ?? {}) as Record<string, unknown>;
       return {
@@ -1662,8 +2944,12 @@ export function normalizePrescription(raw: unknown) {
         durationDays: Number(row.durationDays ?? 0),
         route: String(row.route ?? ''),
         instruction: typeof row.instruction === 'string' ? row.instruction : undefined,
+        status: pickStringField(row, 'status', 'itemStatus', 'item_status'),
+        ...normalizeRefundFields(row),
       };
     }),
+    refundedAmount: pickNumberField(item, 'refundedAmount', 'refunded_amount', 'refundAmount', 'refund_amount'),
+    remainingAmount: pickNumberField(item, 'remainingAmount', 'remaining_amount'),
     createdAt: typeof item.createdAt === 'string' ? item.createdAt : undefined,
   };
 }
@@ -1710,6 +2996,7 @@ export function normalizeServiceOrder(raw: unknown): ServiceOrder {
         ...normalizeServiceOrderItemResultFields(row),
         resultPerformedAt:
           typeof row.resultPerformedAt === 'string' ? row.resultPerformedAt : undefined,
+        ...normalizeRefundFields(row),
       };
     }),
   };
@@ -1764,6 +3051,7 @@ export function normalizeCashierServiceOrder(raw: unknown) {
         status: typeof row.status === 'string' ? row.status : undefined,
         resultStatus:
           typeof row.resultStatus === 'string' ? row.resultStatus : undefined,
+        ...normalizeRefundFields(row),
       };
     }),
   };
@@ -1806,6 +3094,42 @@ export function normalizeServiceDeskQueueItem(raw: unknown) {
     verifiedAt: typeof item.verifiedAt === 'string' ? item.verifiedAt : undefined,
     verifiedByName:
       typeof item.verifiedByName === 'string' ? item.verifiedByName : undefined,
+    ...normalizeRefundFields(item),
+  };
+}
+
+export function normalizeInvoiceItem(raw: unknown): InvoiceItemResponse {
+  const item = (raw ?? {}) as Record<string, unknown>;
+  return {
+    id: Number(item.id ?? item.invoiceItemId ?? item.invoice_item_id ?? 0),
+    itemType: pickStringField(item, 'itemType', 'item_type', 'type'),
+    referenceType: pickStringField(item, 'referenceType', 'reference_type'),
+    nameSnapshot: pickStringField(item, 'nameSnapshot', 'name_snapshot', 'name', 'itemName', 'item_name'),
+    unitPrice: pickNumberField(item, 'unitPrice', 'unit_price', 'price'),
+    quantity: pickNumberField(item, 'quantity'),
+    taxRate: pickNumberField(item, 'taxRate', 'tax_rate'),
+    subtotalAmount: pickNumberField(item, 'subtotalAmount', 'subtotal_amount', 'subTotalAmount', 'sub_total_amount'),
+    taxAmount: pickNumberField(item, 'taxAmount', 'tax_amount'),
+    totalAmount: pickNumberField(item, 'totalAmount', 'total_amount', 'amount'),
+    status: pickStringField(item, 'status'),
+    itemStatus: pickStringField(item, 'itemStatus', 'item_status'),
+    refundable: pickBooleanField(item, 'refundable', 'canRefund', 'can_refund', 'isRefundable', 'is_refundable'),
+    refundableAmount: pickNumberField(
+      item,
+      'refundableAmount',
+      'refundable_amount',
+      'availableRefundAmount',
+      'available_refund_amount',
+    ),
+    ...normalizeRefundFields(item),
+  };
+}
+
+export function normalizeRefundableInvoiceItem(raw: unknown): RefundableInvoiceItem {
+  const item = normalizeInvoiceItem(raw);
+  return {
+    ...item,
+    refundable: Boolean(item.refundable),
   };
 }
 
@@ -1817,6 +3141,15 @@ export function normalizeInvoice(raw: unknown) {
     serviceOrderId: String(item.serviceOrderId ?? ''),
     serviceOrderCode:
       typeof item.serviceOrderCode === 'string' ? item.serviceOrderCode : undefined,
+    invoiceType: pickStringField(item, 'invoiceType', 'invoice_type', 'billingType', 'billing_type'),
+    type: pickStringField(item, 'type'),
+    referenceType: pickStringField(item, 'referenceType', 'reference_type'),
+    prescriptionId:
+      typeof item.prescriptionId !== 'undefined' && item.prescriptionId !== null
+        ? String(item.prescriptionId)
+        : undefined,
+    prescriptionCode:
+      typeof item.prescriptionCode === 'string' ? item.prescriptionCode : undefined,
     encounterId:
       typeof item.encounterId !== 'undefined' ? String(item.encounterId) : undefined,
     patientName: typeof item.patientName === 'string' ? item.patientName : undefined,
@@ -1828,7 +3161,9 @@ export function normalizeInvoice(raw: unknown) {
       typeof item.discountAmount === 'number' ? item.discountAmount : undefined,
     taxAmount: typeof item.taxAmount === 'number' ? item.taxAmount : undefined,
     totalAmount: Number(item.totalAmount ?? 0),
-    items: Array.isArray(item.items) ? (item.items as InvoiceItemResponse[]) : undefined,
+    refundedAmount: pickNumberField(item, 'refundedAmount', 'refunded_amount', 'refundAmount', 'refund_amount'),
+    remainingAmount: pickNumberField(item, 'remainingAmount', 'remaining_amount'),
+    items: Array.isArray(item.items) ? item.items.map(normalizeInvoiceItem) : undefined,
     paymentMethod:
       typeof item.paymentMethod === 'string' ? item.paymentMethod : undefined,
     paymentStatus: normalizePaymentStatus(item.paymentStatus),
@@ -1849,6 +3184,8 @@ export function normalizeInvoice(raw: unknown) {
     vnpTxnRef: typeof item.vnpTxnRef === 'string' ? item.vnpTxnRef : undefined,
     vnpPaymentUrl:
       typeof item.vnpPaymentUrl === 'string' ? item.vnpPaymentUrl : undefined,
+    paymentUrl:
+      pickStringField(item, 'paymentUrl', 'payment_url', 'vnpPaymentUrl', 'vnp_payment_url'),
     paymentDetectedAt:
       typeof item.paymentDetectedAt === 'string' ? item.paymentDetectedAt : undefined,
     paidAt: typeof item.paidAt === 'string' ? item.paidAt : undefined,
@@ -1899,5 +3236,7 @@ export function normalizeBranchSpecialtyOption(raw: unknown): Specialty {
     iconUrl: sanitizeMediaUrl(item.iconUrl),
     imageUrl: sanitizeMediaUrl(item.imageUrl),
     status: String(item.effectiveStatus ?? item.status ?? ''),
+    consultationFee:
+      typeof item.consultationFee === 'number' ? item.consultationFee : undefined,
   };
 }

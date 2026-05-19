@@ -26,6 +26,7 @@ import com.PrimeCare.PrimeCare.modules.realtime.service.RealtimeEventPublisher;
 import com.PrimeCare.PrimeCare.shared.common.PageResponse;
 import com.PrimeCare.PrimeCare.shared.enums.EncounterStatus;
 import com.PrimeCare.PrimeCare.shared.enums.MedicationStatus;
+import com.PrimeCare.PrimeCare.shared.enums.PrescriptionItemStatus;
 import com.PrimeCare.PrimeCare.shared.enums.PrescriptionStatus;
 import com.PrimeCare.PrimeCare.shared.exception.ApiException;
 import com.PrimeCare.PrimeCare.shared.exception.ErrorCode;
@@ -122,7 +123,7 @@ public class PrescriptionService {
         }
 
         Prescription saved = prescriptionRepository.save(prescription);
-        auditLogService.log(doctorUser, "CREATE", "PRESCRIPTION", saved.getId(), null, snapshotPrescription(saved));
+        auditLogService.log(doctorUser, "CREATE_PRESCRIPTION", "PRESCRIPTION", saved.getId(), null, snapshotPrescription(saved));
         afterCommitExecutor.execute(() -> publishPrescriptionRealtime(encounter, "PRESCRIPTION_CREATED"));
 
         return toResponse(saved);
@@ -205,9 +206,15 @@ public class PrescriptionService {
 
     @Transactional
     public PrescriptionResponse markAsDispensed(Long prescriptionId, Long dispenserUserId) {
-        Prescription prescription = prescriptionRepository.findWithDetailsById(prescriptionId)
+        Prescription prescription = prescriptionRepository.findWithLockDetailsById(prescriptionId)
                 .orElseThrow(() -> new ApiException(ErrorCode.PRESCRIPTION_NOT_FOUND));
 
+        if (prescription.getStatus() == PrescriptionStatus.DISPENSED) {
+            throw new ApiException(ErrorCode.PRESCRIPTION_INVALID_STATUS, "Prescription has already been dispensed.");
+        }
+        if (prescription.getStatus() == PrescriptionStatus.CANCELLED) {
+            throw new ApiException(ErrorCode.PRESCRIPTION_INVALID_STATUS, "Đơn thuốc đã hủy, không thể phát thuốc.");
+        }
         if (prescription.getStatus() != PrescriptionStatus.PAID) {
             throw new ApiException(ErrorCode.PRESCRIPTION_INVALID_STATUS, "Đơn thuốc chưa thanh toán, không thể phát thuốc.");
         }
@@ -216,22 +223,60 @@ public class PrescriptionService {
                 .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED));
 
         Map<String, Object> before = snapshotPrescription(prescription);
+        List<PrescriptionItem> activeItems = activeDispensableItems(prescription);
+        if (activeItems.isEmpty()) {
+            throw new ApiException(ErrorCode.PRESCRIPTION_INVALID_STATUS, "Đơn thuốc không còn thuốc hợp lệ để phát.");
+        }
 
-        for (PrescriptionItem item : prescription.getItems()) {
+        Map<Long, Integer> requiredQuantityByMedication = requiredQuantityByMedication(activeItems);
+
+        requiredQuantityByMedication.forEach(inventoryService::validateDispenseAvailability);
+
+        for (PrescriptionItem item : activeItems) {
             inventoryService.dispenseFIFO(
                     item.getMedication().getId(),
                     item.getQuantity(),
                     prescription.getId(),
                     dispenserUserId
             );
+            item.setStatus(PrescriptionItemStatus.DISPENSED);
         }
 
         prescription.setStatus(PrescriptionStatus.DISPENSED);
         
         Prescription saved = prescriptionRepository.save(prescription);
-        auditLogService.log(dispenser, "DISPENSE", "PRESCRIPTION", saved.getId(), before, snapshotPrescription(saved));
+        auditLogService.log(dispenser, "DISPENSE_PRESCRIPTION", "PRESCRIPTION", saved.getId(), before, snapshotPrescription(saved));
 
         return toResponse(saved);
+    }
+
+    private List<PrescriptionItem> activeDispensableItems(Prescription prescription) {
+        if (prescription.getItems() == null) {
+            return List.of();
+        }
+        return prescription.getItems().stream()
+                .filter(item -> item.getStatus() != PrescriptionItemStatus.REFUNDED
+                        && item.getStatus() != PrescriptionItemStatus.CANCELLED
+                        && item.getStatus() != PrescriptionItemStatus.DISPENSED)
+                .toList();
+    }
+
+    private Map<Long, Integer> requiredQuantityByMedication(List<PrescriptionItem> items) {
+        if (items == null || items.isEmpty()) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "Đơn thuốc không có thuốc để phát");
+        }
+
+        Map<Long, Integer> requiredQuantityByMedication = new LinkedHashMap<>();
+        for (PrescriptionItem item : items) {
+            if (item.getMedication() == null
+                    || item.getMedication().getId() == null
+                    || item.getQuantity() == null
+                    || item.getQuantity() <= 0) {
+                throw new ApiException(ErrorCode.INVALID_REQUEST, "Số lượng thuốc trong đơn không hợp lệ");
+            }
+            requiredQuantityByMedication.merge(item.getMedication().getId(), item.getQuantity(), Integer::sum);
+        }
+        return requiredQuantityByMedication;
     }
 
     private String normalizePharmacyKeyword(String q) {
@@ -308,7 +353,7 @@ public class PrescriptionService {
         }
 
         Prescription saved = prescriptionRepository.save(prescription);
-        auditLogService.log(doctorUser, "UPDATE", "PRESCRIPTION", saved.getId(), before, snapshotPrescription(saved));
+        auditLogService.log(doctorUser, "UPDATE_PRESCRIPTION", "PRESCRIPTION", saved.getId(), before, snapshotPrescription(saved));
         afterCommitExecutor.execute(() -> publishPrescriptionRealtime(saved.getEncounter(), "PRESCRIPTION_UPDATED"));
 
         return toResponse(saved);
@@ -325,12 +370,17 @@ public class PrescriptionService {
             return toResponse(prescription);
         }
 
+        if (prescription.getStatus() != PrescriptionStatus.DRAFT
+                && prescription.getStatus() != PrescriptionStatus.ISSUED) {
+            throw new ApiException(ErrorCode.PRESCRIPTION_INVALID_STATUS, "Chỉ được hủy đơn thuốc ở trạng thái DRAFT hoặc ISSUED");
+        }
+
         Map<String, Object> before = snapshotPrescription(prescription);
 
         prescription.setStatus(PrescriptionStatus.CANCELLED);
         Prescription saved = prescriptionRepository.save(prescription);
 
-        auditLogService.log(doctorUser, "CANCEL", "PRESCRIPTION", saved.getId(), before, snapshotPrescription(saved));
+        auditLogService.log(doctorUser, "CANCEL_PRESCRIPTION", "PRESCRIPTION", saved.getId(), before, snapshotPrescription(saved));
         afterCommitExecutor.execute(() -> publishPrescriptionRealtime(saved.getEncounter(), "PRESCRIPTION_CANCELLED"));
 
         return toResponse(saved);
@@ -482,6 +532,9 @@ public class PrescriptionService {
                                                                    .durationDays(i.getDurationDays())
                                                                    .route(i.getRoute())
                                                                    .instruction(i.getInstruction())
+                                                                   .status(i.getStatus())
+                                                                   .refundReason(i.getRefundReason())
+                                                                   .refundedAt(i.getRefundedAt())
                                                                    .build()
                                    ).toList())
                                    .build();

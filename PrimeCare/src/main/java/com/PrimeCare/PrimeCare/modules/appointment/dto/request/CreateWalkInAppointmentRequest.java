@@ -57,5 +57,12 @@ public class CreateWalkInAppointmentRequest {
     @Size(max = 1000)
     private String patientNote;
 
-    private boolean arrived = true;
+    /*
+     * Legacy compatibility field. Missing/null means the walk-in patient is present.
+     */
+    private Boolean arrived = true;
+
+    public boolean isArrived() {
+        return arrived == null || arrived;
+    }
 }

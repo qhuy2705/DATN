@@ -158,27 +158,27 @@ public class WebSocketAuthChannelInterceptor implements org.springframework.mess
         }
 
         if (destination.startsWith("/topic/appointments/summary")) {
-            requireAnyRole(authentication, Set.of("ROLE_DOCTOR", "ROLE_STAFF", "ROLE_OPERATIONS_ADMIN", "ROLE_SYSTEM_ADMIN"));
+            requireAnyRole(authentication, Set.of("ROLE_STAFF", "ROLE_OPERATIONS_ADMIN"));
             return;
         }
 
         if (destination.startsWith("/topic/cashier/")) {
-            requireAnyRole(authentication, Set.of("ROLE_CASHIER", "ROLE_OPERATIONS_ADMIN", "ROLE_SYSTEM_ADMIN"));
+            requireAnyRole(authentication, Set.of("ROLE_CASHIER"));
             return;
         }
 
         if (destination.startsWith("/topic/service-desk/")) {
-            requireAnyRole(authentication, Set.of("ROLE_SERVICE_TECHNICIAN", "ROLE_OPERATIONS_ADMIN", "ROLE_SYSTEM_ADMIN"));
+            requireAnyRole(authentication, Set.of("ROLE_SERVICE_TECHNICIAN"));
             return;
         }
 
         if (destination.startsWith("/topic/doctor/")) {
-            requireAnyRole(authentication, Set.of("ROLE_DOCTOR", "ROLE_OPERATIONS_ADMIN", "ROLE_SYSTEM_ADMIN"));
+            authorizeDoctorDestination(authentication, destination);
             return;
         }
 
         if (destination.startsWith("/topic/encounter/")) {
-            requireAnyRole(authentication, Set.of("ROLE_DOCTOR", "ROLE_STAFF", "ROLE_SERVICE_TECHNICIAN", "ROLE_OPERATIONS_ADMIN", "ROLE_SYSTEM_ADMIN"));
+            requireAnyRole(authentication, Set.of("ROLE_DOCTOR"));
             return;
         }
 
@@ -223,31 +223,31 @@ public class WebSocketAuthChannelInterceptor implements org.springframework.mess
         String topicPath = branchDestination.topicPath();
 
         if (topicPath.startsWith("appointments/summary")) {
-            requireAnyRole(authentication, Set.of("ROLE_DOCTOR", "ROLE_STAFF", "ROLE_OPERATIONS_ADMIN", "ROLE_SYSTEM_ADMIN"));
+            requireAnyRole(authentication, Set.of("ROLE_STAFF", "ROLE_OPERATIONS_ADMIN"));
             requireBranchAccess(authentication, branchDestination.branchId());
             return;
         }
 
         if (topicPath.startsWith("reception/queue")) {
-            requireAnyRole(authentication, Set.of("ROLE_STAFF", "ROLE_OPERATIONS_ADMIN", "ROLE_SYSTEM_ADMIN"));
+            requireAnyRole(authentication, Set.of("ROLE_STAFF"));
             requireBranchAccess(authentication, branchDestination.branchId());
             return;
         }
 
         if (topicPath.startsWith("cashier/orders")) {
-            requireAnyRole(authentication, Set.of("ROLE_CASHIER", "ROLE_OPERATIONS_ADMIN", "ROLE_SYSTEM_ADMIN"));
+            requireAnyRole(authentication, Set.of("ROLE_CASHIER"));
             requireBranchAccess(authentication, branchDestination.branchId());
             return;
         }
 
         if (topicPath.startsWith("service-desk/")) {
-            requireAnyRole(authentication, Set.of("ROLE_SERVICE_TECHNICIAN", "ROLE_OPERATIONS_ADMIN", "ROLE_SYSTEM_ADMIN"));
+            requireAnyRole(authentication, Set.of("ROLE_SERVICE_TECHNICIAN"));
             requireBranchAccess(authentication, branchDestination.branchId());
             return;
         }
 
         if (topicPath.startsWith("pharmacy/updates")) {
-            requireAnyRole(authentication, Set.of("ROLE_PHARMACIST", "ROLE_OPERATIONS_ADMIN", "ROLE_SYSTEM_ADMIN"));
+            requireAnyRole(authentication, Set.of("ROLE_PHARMACIST"));
             requireBranchAccess(authentication, branchDestination.branchId());
             return;
         }
@@ -288,6 +288,34 @@ public class WebSocketAuthChannelInterceptor implements org.springframework.mess
 
         if (!branchId.equals(userBranchId)) {
             throw new AccessDeniedException("You do not have permission for this branch destination");
+        }
+    }
+
+    private void authorizeDoctorDestination(Authentication authentication, String destination) {
+        requireAnyRole(authentication, Set.of("ROLE_DOCTOR"));
+
+        Long destinationDoctorId = parseDoctorDestination(destination);
+        Long userId = Long.valueOf(authentication.getName());
+        User user = userRepository.findWithBranchProfilesById(userId)
+                .orElseThrow(() -> new AccessDeniedException("User not found"));
+
+        Long ownDoctorId = user.getDoctorProfile() != null ? user.getDoctorProfile().getId() : null;
+        if (!destinationDoctorId.equals(ownDoctorId)) {
+            throw new AccessDeniedException("You do not have permission for this doctor destination");
+        }
+    }
+
+    private Long parseDoctorDestination(String destination) {
+        String remainder = destination.substring("/topic/doctor/".length());
+        int slash = remainder.indexOf('/');
+        if (slash <= 0) {
+            throw new AccessDeniedException("Doctor destination is invalid");
+        }
+
+        try {
+            return Long.valueOf(remainder.substring(0, slash));
+        } catch (NumberFormatException ex) {
+            throw new AccessDeniedException("Doctor destination is invalid");
         }
     }
 

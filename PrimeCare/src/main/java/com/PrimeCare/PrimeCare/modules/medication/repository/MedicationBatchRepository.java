@@ -1,9 +1,11 @@
 package com.PrimeCare.PrimeCare.modules.medication.repository;
 
 import com.PrimeCare.PrimeCare.modules.medication.entity.MedicationBatch;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -13,8 +15,10 @@ import java.util.List;
 public interface MedicationBatchRepository extends JpaRepository<MedicationBatch, Long> {
 
     /** FIFO: oldest expiry first, only batches with stock > 0 */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT mb FROM MedicationBatch mb WHERE mb.medication.id = :medId " +
             "AND mb.quantityInStock > 0 AND mb.deleted = false " +
+            "AND (mb.expiryDate IS NULL OR mb.expiryDate >= CURRENT_DATE) " +
             "ORDER BY mb.expiryDate ASC NULLS LAST")
     List<MedicationBatch> findAvailableBatchesFIFO(@Param("medId") Long medicationId);
 

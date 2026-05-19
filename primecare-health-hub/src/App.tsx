@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
 import { Toaster as Sonner } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { PublicLayout } from '@/layouts/PublicLayout';
@@ -19,6 +19,8 @@ import AvailabilityPage from '@/pages/public/AvailabilityPage';
 import BookingPage from '@/pages/public/BookingPage';
 import BookingSuccessPage from '@/pages/public/BookingSuccessPage';
 import AppointmentLookupPage from '@/pages/public/AppointmentLookupPage';
+import AppointmentResponsePage from '@/pages/public/AppointmentResponsePage';
+import RescheduleOfferPage from '@/pages/public/RescheduleOfferPage';
 import ResultLookupPage from '@/pages/public/ResultLookupPage';
 import AboutPage from '@/pages/public/AboutPage';
 import FaqPage from '@/pages/public/FaqPage';
@@ -41,13 +43,14 @@ import MedicalServicesAdminPage from '@/pages/internal/MedicalServicesAdminPage'
 import DoctorSchedulesAdminPage from '@/pages/internal/DoctorSchedulesAdminPage';
 import DoctorLeavesAdminPage from '@/pages/internal/DoctorLeavesAdminPage';
 import AuditLogsPage from '@/pages/internal/AuditLogsPage';
+import RateLimitsPage from '@/pages/internal/RateLimitsPage';
 import AppointmentsPage from '@/pages/internal/AppointmentsPage';
 import AppointmentProcessingPage from '@/pages/internal/AppointmentProcessingPage';
+import AppointmentFollowUpsPage from '@/pages/internal/AppointmentFollowUpsPage';
 import ReceptionQueuePage from '@/pages/internal/ReceptionQueuePage';
 import WalkInPage from '@/pages/internal/WalkInPage';
 import DoctorAppointmentsPage from '@/pages/internal/DoctorAppointmentsPage';
 import EncounterDetailPage from '@/pages/internal/EncounterDetailPage';
-import PrescriptionsPage from '@/pages/internal/PrescriptionsPage';
 import DoctorSchedulesViewPage from '@/pages/internal/DoctorSchedulesViewPage';
 import LeaveRequestsPage from '@/pages/internal/LeaveRequestsPage';
 import InvoicesPage from '@/pages/internal/InvoicesPage';
@@ -61,6 +64,8 @@ import PatientResultsPage from '@/pages/patient/PatientResultsPage';
 import PatientInvoicesPage from '@/pages/patient/PatientInvoicesPage';
 import PharmacyDispensePage from '@/pages/internal/PharmacyDispensePage';
 import PharmacyInventoryPage from '@/pages/internal/PharmacyInventoryPage';
+import NotificationsAdminPage from '@/pages/internal/NotificationsAdminPage';
+import BookingRestrictionsPage from '@/pages/internal/BookingRestrictionsPage';
 import { ROUTE_ROLES } from '@/lib/route-access';
 import { useSessionBootstrap } from '@/hooks/use-session-bootstrap';
 
@@ -71,6 +76,18 @@ const queryClient = new QueryClient({
 function SessionBootstrap() {
   useSessionBootstrap();
   return null;
+}
+
+function DoctorPrescriptionsRedirect() {
+  const [searchParams] = useSearchParams();
+  const encounterId = searchParams.get('encounterId')?.trim();
+
+  return (
+    <Navigate
+      to={encounterId ? `/app/doctor/encounters/${encodeURIComponent(encounterId)}` : '/app/doctor/appointments'}
+      replace
+    />
+  );
 }
 
 const App = () => (
@@ -92,6 +109,8 @@ const App = () => (
             <Route path="/booking" element={<BookingPage />} />
             <Route path="/booking/success" element={<BookingSuccessPage />} />
             <Route path="/appointments/lookup" element={<AppointmentLookupPage />} />
+            <Route path="/appointment-response/:token" element={<AppointmentResponsePage />} />
+            <Route path="/public/reschedule/:token" element={<RescheduleOfferPage />} />
             <Route path="/results/lookup" element={<ResultLookupPage />} />
             <Route path="/about" element={<AboutPage />} />
             <Route path="/faq" element={<FaqPage />} />
@@ -153,10 +172,22 @@ const App = () => (
               <Route element={<RouteGuard roles={ROUTE_ROLES.auditLogs} />}>
                 <Route path="/app/admin/audit-logs" element={<AuditLogsPage />} />
               </Route>
+              <Route element={<RouteGuard roles={ROUTE_ROLES.rateLimits} />}>
+                <Route path="/app/admin/rate-limits" element={<RateLimitsPage />} />
+              </Route>
+              <Route element={<RouteGuard roles={ROUTE_ROLES.notifications} />}>
+                <Route path="/app/admin/notifications" element={<NotificationsAdminPage />} />
+              </Route>
 
               <Route element={<RouteGuard roles={ROUTE_ROLES.appointments} />}>
                 <Route path="/app/appointments" element={<AppointmentsPage />} />
                 <Route path="/app/appointments/:id/process" element={<AppointmentProcessingPage />} />
+              </Route>
+              <Route element={<RouteGuard roles={ROUTE_ROLES.bookingRestrictions} />}>
+                <Route path="/app/booking-restrictions" element={<BookingRestrictionsPage />} />
+              </Route>
+              <Route element={<RouteGuard roles={ROUTE_ROLES.appointmentFollowUps} />}>
+                <Route path="/app/appointment-follow-ups" element={<AppointmentFollowUpsPage />} />
               </Route>
               <Route element={<RouteGuard roles={ROUTE_ROLES.receptionQueue} />}>
                 <Route path="/app/reception/queue" element={<ReceptionQueuePage />} />
@@ -172,7 +203,7 @@ const App = () => (
               <Route element={<RouteGuard roles={ROUTE_ROLES.doctor} />}>
                 <Route path="/app/doctor/appointments" element={<DoctorAppointmentsPage />} />
                 <Route path="/app/doctor/encounters/:id" element={<EncounterDetailPage />} />
-                <Route path="/app/doctor/prescriptions" element={<PrescriptionsPage />} />
+                <Route path="/app/doctor/prescriptions" element={<DoctorPrescriptionsRedirect />} />
                 <Route path="/app/doctor/schedules" element={<DoctorSchedulesViewPage />} />
                 <Route path="/app/doctor/leave-requests" element={<LeaveRequestsPage />} />
               </Route>

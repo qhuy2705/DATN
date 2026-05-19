@@ -7,13 +7,18 @@ import type {
   ApiResponse,
   Appointment,
   AppointmentLookupVerifyResult,
+  BookingEmailOtpRequestResult,
+  BookingEmailOtpVerifyResult,
   BookingRequest,
   Branch,
   PublicAppointmentActionResult,
+  PublicAppointmentResponseActionResult,
+  PublicAppointmentResponseInfo,
   PublicAssistantRequestPayload,
   PublicAssistantResponse,
   PublicFaqItem,
   PublicLookupOtpResult,
+  RescheduleOffer,
   ResultLookupVerifyResult,
 } from '@/types/api';
 import {
@@ -24,6 +29,7 @@ import {
   normalizeDoctor,
   normalizeMedicalService,
   normalizePublicFaq,
+  normalizeRescheduleOffer,
   normalizeSpecialty,
   unwrapApiData,
   unwrapPage,
@@ -46,6 +52,8 @@ export const queryKeys = {
   availability: (params: Record<string, string> | undefined, language: string) =>
     ['public', 'availability', params, language] as const,
   faqs: (language: string) => ['public', 'faqs', language] as const,
+  rescheduleOffer: (token: string) => ['public', 'reschedule-offer', token] as const,
+  appointmentResponse: (token: string) => ['public', 'appointment-response', token] as const,
 };
 
 function normalizeAvailabilityParams(params?: {
@@ -88,11 +96,156 @@ function buildPublicWebSocketUrl() {
   return `${appBaseUrl.replace(/^http/, 'ws')}/ws`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function pickNumber(item: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+
+  return undefined;
+}
+
+function pickString(item: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === 'string' && value.trim()) return value;
+    if (typeof value === 'number') return String(value);
+  }
+
+  return undefined;
+}
+
+function pickBoolean(item: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+      if (value.toLowerCase() === 'true') return true;
+      if (value.toLowerCase() === 'false') return false;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizePublicAppointmentResponseInfo(value: unknown): PublicAppointmentResponseInfo {
+  const record = isRecord(value) ? value : {};
+  const appointment = isRecord(record.appointment) ? record.appointment : {};
+  const source = Object.keys(appointment).length > 0 ? { ...record, ...appointment } : record;
+
+  return {
+    token: pickString(source, 'token'),
+    status: pickString(record, 'status') ?? pickString(source, 'status'),
+    appointmentId: pickString(source, 'appointmentId', 'id'),
+    appointmentCode: pickString(source, 'appointmentCode', 'code'),
+    patientFullName: pickString(source, 'patientFullName', 'patientName', 'fullName'),
+    patientPhone: pickString(source, 'patientPhone', 'phone'),
+    maskedPhone: pickString(source, 'maskedPhone', 'phoneMasked'),
+    patientEmail: pickString(source, 'patientEmail', 'email'),
+    maskedEmail: pickString(source, 'maskedEmail', 'emailMasked', 'maskedDestination'),
+    doctorName: pickString(source, 'doctorName'),
+    specialtyName: pickString(source, 'specialtyName'),
+    branchName: pickString(source, 'branchName'),
+    visitDate: pickString(source, 'visitDate'),
+    slotStart: pickString(source, 'slotStart', 'startTime'),
+    slotEnd: pickString(source, 'slotEnd', 'endTime'),
+    expiresAt: pickString(source, 'expiresAt'),
+    contactStatus: pickString(source, 'contactStatus', 'phoneContactStatus'),
+    patientResponseStatus: pickString(source, 'patientResponseStatus', 'responseStatus'),
+    canKeepAppointment: pickBoolean(source, 'canKeepAppointment', 'canKeep'),
+    canRequestRecall: pickBoolean(source, 'canRequestRecall', 'canRequestCallBack'),
+    canUpdatePhone: pickBoolean(source, 'canUpdatePhone'),
+    canCancel: pickBoolean(source, 'canCancel'),
+    message: pickString(source, 'message'),
+  };
+}
+
+function normalizePublicAppointmentResponseAction(value: unknown): PublicAppointmentResponseActionResult {
+  const record = isRecord(value) ? value : {};
+  return {
+    status: pickString(record, 'status'),
+    message: pickString(record, 'message'),
+    appointment: normalizePublicAppointmentResponseInfo(record.appointment ?? record),
+  };
+}
+
+function normalizeBookingEmailOtpRequestResult(value: unknown): BookingEmailOtpRequestResult {
+  if (!isRecord(value)) return {};
+
+  return {
+    verificationId: typeof value.verificationId === 'string' ? value.verificationId : undefined,
+    channel: typeof value.channel === 'string' ? value.channel : undefined,
+    email: typeof value.email === 'string' ? value.email : undefined,
+    maskedDestination: typeof value.maskedDestination === 'string' ? value.maskedDestination : undefined,
+    maskedEmail: typeof value.maskedEmail === 'string'
+      ? value.maskedEmail
+      : typeof value.maskedDestination === 'string'
+        ? value.maskedDestination
+        : undefined,
+    expiresInSeconds: pickNumber(value, 'expiresInSeconds', 'ttlSeconds'),
+    resendAvailableInSeconds: pickNumber(value, 'resendAvailableInSeconds', 'retryAfterSeconds', 'cooldownSeconds'),
+    retryAfterSeconds: pickNumber(value, 'retryAfterSeconds'),
+    cooldownSeconds: pickNumber(value, 'cooldownSeconds'),
+  };
+}
+
+function normalizeBookingEmailOtpVerifyResult(value: unknown): BookingEmailOtpVerifyResult {
+  const record = isRecord(value) ? value : {};
+  const token =
+    typeof record.bookingEmailVerificationToken === 'string'
+      ? record.bookingEmailVerificationToken
+      : typeof record.verificationToken === 'string'
+        ? record.verificationToken
+        : typeof record.token === 'string'
+          ? record.token
+          : '';
+
+  return {
+    bookingEmailVerificationToken: token,
+    email: typeof record.email === 'string' ? record.email : undefined,
+    normalizedEmail: typeof record.normalizedEmail === 'string' ? record.normalizedEmail : undefined,
+    expiresAt: typeof record.expiresAt === 'string' ? record.expiresAt : undefined,
+    expiresInSeconds: pickNumber(record, 'expiresInSeconds', 'ttlSeconds'),
+  };
+}
+
 export function useCreatePublicAppointment() {
   return useMutation({
     mutationFn: async (payload: BookingRequest) => {
       const { data } = await apiClient.post<ApiResponse<Appointment>>('/public/appointments', payload);
       return normalizeAppointment(unwrapApiData<Appointment>(data));
+    },
+  });
+}
+
+export function useRequestBookingEmailOtp() {
+  return useMutation({
+    mutationFn: async (payload: { email: string }) => {
+      const { data } = await apiClient.post<ApiResponse<unknown>>(
+        '/public/booking-email-otp/request',
+        payload,
+      );
+      return normalizeBookingEmailOtpRequestResult(unwrapApiData(data));
+    },
+  });
+}
+
+export function useVerifyBookingEmailOtp() {
+  return useMutation({
+    mutationFn: async ({ verificationId, otp }: { verificationId: string; otp: string }) => {
+      const { data } = await apiClient.post<ApiResponse<unknown>>(
+        '/public/booking-email-otp/verify',
+        { verificationId, otp },
+      );
+      return normalizeBookingEmailOtpVerifyResult(unwrapApiData(data));
     },
   });
 }
@@ -343,6 +496,91 @@ export function usePublicFaqs() {
       return unwrapApiData<unknown[]>(data).map(normalizePublicFaq) as PublicFaqItem[];
     },
   });
+}
+
+export function useRescheduleOffer(token: string | undefined) {
+  const normalizedToken = token?.trim() ?? '';
+
+  return useQuery({
+    queryKey: queryKeys.rescheduleOffer(normalizedToken),
+    queryFn: async () => {
+      const { data } = await apiClient.get<ApiResponse<unknown>>(
+        `/public/reschedule/${encodeURIComponent(normalizedToken)}`,
+      );
+      return normalizeRescheduleOffer(unwrapApiData(data));
+    },
+    enabled: Boolean(normalizedToken),
+    retry: false,
+  });
+}
+
+function useRescheduleOfferAction(action: 'accept' | 'request-contact' | 'cancel') {
+  return useMutation({
+    mutationFn: async (token: string) => {
+      const { data } = await apiClient.post<ApiResponse<unknown>>(
+        `/public/reschedule/${encodeURIComponent(token)}/${action}`,
+      );
+      return normalizeRescheduleOffer(unwrapApiData(data)) as RescheduleOffer;
+    },
+  });
+}
+
+export function useAcceptRescheduleOffer() {
+  return useRescheduleOfferAction('accept');
+}
+
+export function useRequestRescheduleContact() {
+  return useRescheduleOfferAction('request-contact');
+}
+
+export function useCancelRescheduleOffer() {
+  return useRescheduleOfferAction('cancel');
+}
+
+export function usePublicAppointmentResponse(token: string | undefined) {
+  const normalizedToken = token?.trim() ?? '';
+
+  return useQuery({
+    queryKey: queryKeys.appointmentResponse(normalizedToken),
+    queryFn: async () => {
+      const { data } = await apiClient.get<ApiResponse<unknown>>(
+        `/public/appointment-response/${encodeURIComponent(normalizedToken)}`,
+      );
+      return normalizePublicAppointmentResponseInfo(unwrapApiData(data));
+    },
+    enabled: Boolean(normalizedToken),
+    retry: false,
+  });
+}
+
+function usePublicAppointmentResponseAction(
+  action: 'keep' | 'request-recall' | 'update-phone' | 'cancel',
+) {
+  return useMutation({
+    mutationFn: async ({ token, body }: { token: string; body?: Record<string, unknown> }) => {
+      const { data } = await apiClient.post<ApiResponse<unknown>>(
+        `/public/appointment-response/${encodeURIComponent(token)}/${action}`,
+        body ?? {},
+      );
+      return normalizePublicAppointmentResponseAction(unwrapApiData(data));
+    },
+  });
+}
+
+export function useKeepPublicAppointmentResponse() {
+  return usePublicAppointmentResponseAction('keep');
+}
+
+export function useRequestPublicAppointmentRecall() {
+  return usePublicAppointmentResponseAction('request-recall');
+}
+
+export function useUpdatePublicAppointmentPhone() {
+  return usePublicAppointmentResponseAction('update-phone');
+}
+
+export function useCancelPublicAppointmentResponse() {
+  return usePublicAppointmentResponseAction('cancel');
 }
 
 export function useRequestAppointmentLookupOtp() {

@@ -69,7 +69,7 @@ public class PublicLookupOtpEmailConsumer {
                 InternalNotificationService.SEVERITY_CRITICAL,
                 "Gửi OTP email thất bại",
                 "Gửi OTP tra cứu " + event.lookupType() + " cho mã " + event.referenceCode() + " thất bại.",
-                "/app/admin/notifications",
+                "/app/admin/dashboard",
                 "OTP",
                 event.referenceId(),
                 java.util.Map.of(

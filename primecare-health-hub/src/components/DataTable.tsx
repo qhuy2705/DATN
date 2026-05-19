@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { LoadingSkeleton } from '@/components/LoadingSkeleton';
+import { cn } from '@/lib/utils';
 
 export interface Column<T> {
   key: string;
@@ -33,12 +34,13 @@ interface DataTableProps<T> {
   onRetry?: () => void;
   loadingRows?: number;
   keyExtractor?: (row: T) => string;
+  onRowClick?: (row: T) => void;
 }
 
 export function DataTable<T>({
   columns, data, searchValue, onSearchChange, searchPlaceholder,
   page = 1, totalPages = 1, onPageChange, actions, toolbar, emptyMessage,
-  isLoading = false, isError = false, errorMessage, onRetry, loadingRows = 5, keyExtractor,
+  isLoading = false, isError = false, errorMessage, onRetry, loadingRows = 5, keyExtractor, onRowClick,
 }: DataTableProps<T>) {
   const { t } = useTranslation();
   const previousPageLabel = t('common.previousPage', { defaultValue: 'Trang trước' });
@@ -99,13 +101,28 @@ export function DataTable<T>({
                 </TableRow>
               ) : (
                 data.map((row, i) => (
-                  <TableRow key={keyExtractor ? keyExtractor(row) : i} className="transition-colors hover:bg-primary/[0.035]">
+                  <TableRow
+                    key={keyExtractor ? keyExtractor(row) : i}
+                    className={cn(
+                      'transition-colors hover:bg-primary/[0.035]',
+                      onRowClick && 'cursor-pointer',
+                    )}
+                    tabIndex={onRowClick ? 0 : undefined}
+                    onClick={() => onRowClick?.(row)}
+                    onKeyDown={(event) => {
+                      if (!onRowClick) return;
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        onRowClick(row);
+                      }
+                    }}
+                  >
                     {columns.map((col) => (
                       <TableCell key={col.key} className={col.className}>
                         {col.cell ? col.cell(row) : String((row as Record<string, unknown>)[col.key] ?? '')}
                       </TableCell>
                     ))}
-                    {actions && <TableCell>{actions(row)}</TableCell>}
+                    {actions && <TableCell onClick={(event) => event.stopPropagation()}>{actions(row)}</TableCell>}
                   </TableRow>
                 ))
               )}

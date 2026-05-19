@@ -9,30 +9,51 @@ import type {
   Appointment,
   AppointmentListQueryParams,
   AuditLog,
+  AuditLogQueryParams,
   AvailabilityQueryParams,
+  BookingRestriction,
+  BookingRestrictionDetailResponse,
+  BookingRestrictionListQueryParams,
+  BookingRestrictionManualViolationRequest,
+  BookingRestrictionOverrideRequest,
+  BookingRestrictionPardonRequest,
+  BookingRestrictionReasonRequest,
+  BookingRestrictionSummary,
   Branch,
   BranchMasterDataSummary,
   BranchSpecialty,
+  CreateRateLimitRuleRequest,
   DashboardBreakdown,
   DashboardKpis,
   DashboardOverview,
   Doctor,
+  DoctorCancellationAffectedAppointment,
   DoctorMasterDataSummary,
+  DoctorOption,
   DoctorSchedule,
   DoctorScheduleImportResult,
-  DoctorScheduleDoctorOption,
   LeaveRequest,
   MedicalService,
   Medication,
   Patient,
   PdfJob,
+  MarkWrongAppointmentContactRequest,
+  RateLimitRule,
+  RecordAppointmentCallOutcomeRequest,
   Staff,
   StaffMasterDataSummary,
+  UpdateRateLimitRuleRequest,
 } from '@/types/api';
 import {
   normalizeAdminSpecialty,
   normalizeAppointment,
+  normalizeAffectedAppointment,
   normalizeAuditLog,
+  normalizeBookingRestriction,
+  normalizeBookingRestrictionDetail,
+  normalizeBookingRestrictionOverride,
+  normalizeBookingRestrictionSummary,
+  normalizeBookingViolationEvent,
   normalizeBranchMasterDataSummary,
   normalizeAvailability,
   normalizeBranch,
@@ -42,15 +63,18 @@ import {
   normalizeDashboardOverview,
   normalizeDoctor,
   normalizeDoctorMasterDataSummary,
+  normalizeDoctorOption,
   normalizeDoctorSchedule,
   normalizeLeaveRequest,
   normalizeMedicalService,
   normalizeMedication,
   normalizePatient,
+  normalizeRateLimitRule,
   normalizeStaff,
   normalizeStaffMasterDataSummary,
   unwrapApiData,
   unwrapPage,
+  unwrapPageItems,
 } from '@/lib/api-adapters';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/error-utils';
@@ -60,13 +84,22 @@ export const adminQueryKeys = {
   appointments: (params?: AppointmentListQueryParams) => ['admin', 'appointments', params] as const,
   appointmentDetail: (id?: string) => ['admin', 'appointments', 'detail', id] as const,
   appointmentSummary: (params?: Record<string, string>) => ['admin', 'appointments', 'summary', params] as const,
+  appointmentBookingRestrictionSummary: (id?: string) =>
+    ['admin', 'appointments', id, 'booking-restriction-summary'] as const,
+  bookingRestrictions: (params?: BookingRestrictionListQueryParams) =>
+    ['admin', 'booking-restrictions', params] as const,
+  bookingRestrictionDetail: (id?: string) =>
+    ['admin', 'booking-restrictions', 'detail', id] as const,
   rescheduleAvailability: (appointmentId?: string, params?: AvailabilityQueryParams) =>
     ['admin', 'appointments', appointmentId, 'reschedule-availability', params] as const,
-  auditLogs: (params?: Record<string, string>) => ['admin', 'audit-logs', params] as const,
+  auditLogs: (params?: AuditLogQueryParams) => ['admin', 'audit-logs', params] as const,
+  rateLimitRules: () => ['admin', 'rate-limit-rules'] as const,
+  rateLimitRule: (id?: string) => ['admin', 'rate-limit-rules', id] as const,
   branches: (params?: Record<string, string>) => ['admin', 'branches', params] as const,
   branchesSummary: (params?: Record<string, string>) =>
     ['admin', 'branches', 'summary', params] as const,
   doctors: (params?: Record<string, string>) => ['admin', 'doctors', params] as const,
+  doctorOptions: (params?: Record<string, string>) => ['admin', 'doctors', 'options', params] as const,
   doctorsSummary: (params?: Record<string, string>) =>
     ['admin', 'doctors', 'summary', params] as const,
   staffs: (params?: Record<string, string>) => ['admin', 'staffs', params] as const,
@@ -83,6 +116,8 @@ export const adminQueryKeys = {
   doctorScheduleDoctorOptions: ['admin', 'doctor-schedules', 'doctor-options'] as const,
   doctorLeaves: (params?: Record<string, string>) =>
     ['admin', 'doctor-leaves', params] as const,
+  doctorLeaveAffectedAppointments: (leaveId?: string) =>
+    ['admin', 'doctor-leaves', leaveId, 'affected-appointments'] as const,
 };
 
 export function useDashboardOverview(params?: Record<string, string>) {
@@ -154,6 +189,192 @@ function getHttpStatus(error: unknown) {
   return (error as { response?: { status?: number } })?.response?.status;
 }
 
+function isMissingEndpoint(error: unknown) {
+  const status = getHttpStatus(error);
+  return status === 404 || status === 405;
+}
+
+function invalidateBookingRestrictionQueries(
+  qc: ReturnType<typeof useQueryClient>,
+  restrictionId?: string,
+) {
+  qc.invalidateQueries({ queryKey: ['admin', 'booking-restrictions'] });
+  if (restrictionId) {
+    qc.invalidateQueries({ queryKey: adminQueryKeys.bookingRestrictionDetail(restrictionId) });
+  }
+  qc.invalidateQueries({ queryKey: ['admin', 'appointments'], refetchType: 'inactive' });
+}
+
+export function useBookingRestrictions(
+  params?: BookingRestrictionListQueryParams,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: adminQueryKeys.bookingRestrictions(params),
+    enabled: options?.enabled ?? true,
+    queryFn: async () => {
+      const { data } = await apiClient.get('/admin/booking-restrictions', { params });
+      const page = unwrapPage<unknown>(data);
+      return {
+        ...page,
+        items: page.items.map(normalizeBookingRestriction) as BookingRestriction[],
+      };
+    },
+    staleTime: 15_000,
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+export function useBookingRestrictionDetail(id?: string, options?: { enabled?: boolean }) {
+  return useQuery<BookingRestrictionDetailResponse>({
+    queryKey: adminQueryKeys.bookingRestrictionDetail(id),
+    enabled: Boolean(id) && (options?.enabled ?? true),
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/admin/booking-restrictions/${id}`);
+      return normalizeBookingRestrictionDetail(unwrapApiData(data));
+    },
+  });
+}
+
+export function useAppointmentBookingRestrictionSummary(
+  appointmentId?: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery<BookingRestrictionSummary | null>({
+    queryKey: adminQueryKeys.appointmentBookingRestrictionSummary(appointmentId),
+    enabled: Boolean(appointmentId) && (options?.enabled ?? true),
+    queryFn: async () => {
+      try {
+        const { data } = await apiClient.get(
+          `/admin/appointments/${appointmentId}/booking-restriction-summary`,
+        );
+        return normalizeBookingRestrictionSummary(unwrapApiData(data));
+      } catch (error) {
+        if (!isMissingEndpoint(error)) throw error;
+      }
+
+      try {
+        const { data } = await apiClient.get(
+          `/admin/appointments/${appointmentId}/booking-restrictions/summary`,
+        );
+        return normalizeBookingRestrictionSummary(unwrapApiData(data));
+      } catch (error) {
+        if (isMissingEndpoint(error)) return null;
+        throw error;
+      }
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useLiftBookingRestriction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, body }: { id: string; body: BookingRestrictionReasonRequest }) => {
+      const { data } = await apiClient.post(`/admin/booking-restrictions/${id}/lift`, body);
+      return normalizeBookingRestriction(unwrapApiData(data));
+    },
+    onSuccess: (result, variables) => {
+      invalidateBookingRestrictionQueries(qc, variables.id);
+      if (result.patientId) {
+        qc.invalidateQueries({ queryKey: ['admin', 'appointments'], refetchType: 'active' });
+      }
+      toast.success('Đã gỡ hạn chế đặt lịch.');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Không thể gỡ hạn chế đặt lịch')),
+  });
+}
+
+export function useCreateBookingOverrideOnce() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, body }: { id: string; body: BookingRestrictionOverrideRequest }) => {
+      const { data } = await apiClient.post(
+        `/admin/booking-restrictions/${id}/override-once`,
+        body,
+      );
+      return normalizeBookingRestrictionOverride(unwrapApiData(data));
+    },
+    onSuccess: (_result, variables) => {
+      invalidateBookingRestrictionQueries(qc, variables.id);
+      toast.success('Đã mở cho một lần đặt.');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Không thể tạo lượt mở đặt lịch')),
+  });
+}
+
+export function useVoidBookingViolationEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (variables: {
+      eventId: string;
+      restrictionId?: string;
+      body: BookingRestrictionReasonRequest;
+    }) => {
+      const { eventId, body } = variables;
+      const { data } = await apiClient.post(
+        `/admin/booking-restrictions/violations/${eventId}/void`,
+        body,
+      );
+      return normalizeBookingViolationEvent(unwrapApiData(data));
+    },
+    onSuccess: (result, variables) => {
+      invalidateBookingRestrictionQueries(qc, result.restrictionId || variables.restrictionId);
+      toast.success('Đã void vi phạm.');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Không thể void vi phạm')),
+  });
+}
+
+export function useCreateBookingStaffPardon() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      restrictionId,
+      body,
+    }: {
+      restrictionId?: string;
+      body: BookingRestrictionPardonRequest;
+    }) => {
+      const { data } = await apiClient.post('/admin/booking-restrictions/pardon', body);
+      return normalizeBookingViolationEvent(unwrapApiData(data));
+    },
+    onSuccess: (result, variables) => {
+      invalidateBookingRestrictionQueries(
+        qc,
+        result.restrictionId || variables.body.restrictionId || variables.restrictionId,
+      );
+      toast.success('Đã ghi nhận ân xá / giảm điểm.');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Không thể ghi nhận giảm điểm')),
+  });
+}
+
+export function useCreateManualBookingViolation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      restrictionId,
+      body,
+    }: {
+      restrictionId?: string;
+      body: BookingRestrictionManualViolationRequest;
+    }) => {
+      const { data } = await apiClient.post('/admin/booking-restrictions/violations', body);
+      return normalizeBookingViolationEvent(unwrapApiData(data));
+    },
+    onSuccess: (result, variables) => {
+      invalidateBookingRestrictionQueries(
+        qc,
+        result.restrictionId || variables.body.restrictionId || variables.restrictionId,
+      );
+      toast.success('Đã tạo vi phạm thủ công.');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Không thể tạo vi phạm thủ công')),
+  });
+}
+
 export function useRescheduleAvailability(
   appointmentId?: string,
   params?: AvailabilityQueryParams,
@@ -192,8 +413,12 @@ export function useRescheduleAvailability(
 
 function getAppointmentActionSuccessMessage(action: string) {
   switch (action) {
+    case 'confirm':
+      return 'Đã xác nhận lịch hẹn.';
+    case 'cancel':
+      return 'Đã hủy lịch hẹn.';
     case 'resolve-no-show':
-      return 'Đã đóng follow-up lịch hẹn.';
+      return 'Đã đánh dấu lịch hẹn đã xử lý.';
     case 'reschedule':
       return 'Đã dời lịch hẹn.';
     default:
@@ -203,25 +428,25 @@ function getAppointmentActionSuccessMessage(action: string) {
 
 function getAppointmentActionErrorFallback(action: string) {
   switch (action) {
-    case 'check-in':
-      return 'Mã QR check-in không hợp lệ.';
     case 'release-claim':
       return 'Không thể nhả quyền xử lý lịch hẹn.';
     case 'claim':
       return 'Không thể nhận quyền xử lý lịch hẹn.';
     case 'no-show':
       return 'Đánh dấu không đến thất bại.';
+    case 'cancel':
+      return 'Không thể hủy lịch hẹn.';
     case 'reschedule':
       return 'Dời lịch hẹn thất bại.';
     case 'resolve-no-show':
-      return 'Đóng follow-up thất bại.';
+      return 'Đánh dấu đã xử lý thất bại.';
     default:
       return 'Thao tác thất bại';
   }
 }
 
 function shouldForceRefreshAppointmentViews(action: string) {
-  return action === 'resolve-no-show' || action === 'reschedule';
+  return action === 'cancel' || action === 'resolve-no-show' || action === 'reschedule';
 }
 
 export function useAppointmentAction() {
@@ -281,6 +506,9 @@ export function useAppointmentAction() {
       });
       qc.invalidateQueries({ queryKey: ['reception', 'queue'], refetchType: 'inactive' });
       qc.invalidateQueries({ queryKey: ['reception', 'queue', 'summary'], refetchType: 'inactive' });
+      qc.invalidateQueries({ queryKey: ['doctor', 'appointments'] });
+      qc.invalidateQueries({ queryKey: ['doctor', 'appointments', 'waiting'] });
+      qc.invalidateQueries({ queryKey: ['doctor', 'appointments', 'summary'] });
       toast.success(getAppointmentActionSuccessMessage(variables.action));
     },
     onError: (error: unknown, variables) => {
@@ -310,7 +538,80 @@ export function useUpdateAppointmentIntake() {
   });
 }
 
-export function useAuditLogs(params?: Record<string, string>) {
+function invalidateAppointmentContactCaches(
+  qc: ReturnType<typeof useQueryClient>,
+  appointmentId: string,
+) {
+  qc.invalidateQueries({ queryKey: adminQueryKeys.appointmentDetail(appointmentId) });
+  qc.invalidateQueries({ queryKey: ['admin', 'appointments'] });
+  qc.invalidateQueries({ queryKey: ['reception', 'queue'] });
+  qc.invalidateQueries({ queryKey: ['admin', 'booking-restrictions'] });
+}
+
+export function useRecordAppointmentCallOutcome() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: RecordAppointmentCallOutcomeRequest;
+    }) => {
+      try {
+        const { data } = await apiClient.post(`/admin/appointments/${id}/call-result`, body);
+        return normalizeAppointment(unwrapApiData(data)) as Appointment;
+      } catch (error) {
+        if (!isMissingEndpoint(error)) throw error;
+        const { data } = await apiClient.post(`/admin/appointments/${id}/contact-call-result`, body);
+        return normalizeAppointment(unwrapApiData(data)) as Appointment;
+      }
+    },
+    onSuccess: (result, variables) => {
+      if (result?.id) {
+        patchAppointmentDetailCacheWithAppointment(qc, result);
+        patchAppointmentAcrossListCaches(qc, result);
+      }
+      invalidateAppointmentContactCaches(qc, result?.id || variables.id);
+      toast.success('Đã ghi nhận kết quả liên hệ.');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Không thể ghi nhận kết quả liên hệ')),
+  });
+}
+
+export function useMarkWrongAppointmentContact() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: MarkWrongAppointmentContactRequest;
+    }) => {
+      try {
+        const { data } = await apiClient.post(`/admin/appointments/${id}/wrong-contact`, body);
+        return normalizeAppointment(unwrapApiData(data)) as Appointment;
+      } catch (error) {
+        if (!isMissingEndpoint(error)) throw error;
+        const { data } = await apiClient.post(`/admin/appointments/${id}/mark-wrong-contact`, body);
+        return normalizeAppointment(unwrapApiData(data)) as Appointment;
+      }
+    },
+    onSuccess: (result, variables) => {
+      if (result?.id) {
+        patchAppointmentDetailCacheWithAppointment(qc, result);
+        patchAppointmentAcrossListCaches(qc, result);
+      }
+      invalidateAppointmentContactCaches(qc, result?.id || variables.id);
+      toast.success('Đã ghi nhận thông tin liên hệ cần kiểm tra lại.');
+    },
+    onError: (error) =>
+      toast.error(getApiErrorMessage(error, 'Không thể ghi nhận thông tin liên hệ cần kiểm tra')),
+  });
+}
+
+export function useAuditLogs(params?: AuditLogQueryParams) {
   return useQuery({
     queryKey: adminQueryKeys.auditLogs(params),
     queryFn: async () => {
@@ -321,6 +622,164 @@ export function useAuditLogs(params?: Record<string, string>) {
         items: page.items.map(normalizeAuditLog) as AuditLog[],
       };
     },
+  });
+}
+
+export function useRateLimitRules() {
+  return useQuery<RateLimitRule[]>({
+    queryKey: adminQueryKeys.rateLimitRules(),
+    queryFn: async () => {
+      const { data } = await apiClient.get('/admin/rate-limit-rules');
+      return unwrapPageItems<unknown>(data).map(normalizeRateLimitRule);
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useRateLimitRule(id?: string, options?: { enabled?: boolean }) {
+  return useQuery<RateLimitRule>({
+    queryKey: adminQueryKeys.rateLimitRule(id),
+    enabled: Boolean(id) && (options?.enabled ?? true),
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/admin/rate-limit-rules/${id}`);
+      return normalizeRateLimitRule(unwrapApiData(data));
+    },
+  });
+}
+
+function invalidateRateLimitRuleQueries(
+  qc: ReturnType<typeof useQueryClient>,
+  ruleId?: string,
+) {
+  qc.invalidateQueries({ queryKey: adminQueryKeys.rateLimitRules() });
+  if (ruleId) {
+    qc.invalidateQueries({ queryKey: adminQueryKeys.rateLimitRule(ruleId) });
+  }
+}
+
+const BRANCH_STATUS_DEPENDENT_ADMIN_FAMILIES = new Set([
+  'branches',
+  'doctors',
+  'doctor-schedules',
+  'doctor-leaves',
+]);
+
+const BRANCH_STATUS_DEPENDENT_PUBLIC_FAMILIES = new Set([
+  'branches',
+  'branches-page',
+  'doctors',
+]);
+
+function isBranchStatusDependentQueryKey(queryKey: readonly unknown[]) {
+  const [scope, family] = queryKey;
+
+  if (scope === 'admin' && typeof family === 'string') {
+    return BRANCH_STATUS_DEPENDENT_ADMIN_FAMILIES.has(family);
+  }
+
+  if (scope === 'public' && typeof family === 'string') {
+    return BRANCH_STATUS_DEPENDENT_PUBLIC_FAMILIES.has(family);
+  }
+
+  return false;
+}
+
+function refreshBranchStatusDependentQueries(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({
+    predicate: (query) => isBranchStatusDependentQueryKey(query.queryKey),
+    refetchType: 'none',
+  });
+
+  void qc.refetchQueries({
+    predicate: (query) => isBranchStatusDependentQueryKey(query.queryKey),
+    type: 'active',
+  });
+}
+
+export function useUpdateRateLimitRule() {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: UpdateRateLimitRuleRequest;
+    }) => {
+      const { data } = await apiClient.put(`/admin/rate-limit-rules/${id}`, body);
+      return normalizeRateLimitRule(unwrapApiData(data));
+    },
+    onSuccess: (_result, variables) => {
+      invalidateRateLimitRuleQueries(qc, variables.id);
+      toast.success('Đã cập nhật rule giới hạn truy cập.');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Không thể cập nhật rule giới hạn truy cập')),
+  });
+}
+
+export function useCreateRateLimitRule() {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (body: CreateRateLimitRuleRequest) => {
+      const { data } = await apiClient.post('/admin/rate-limit-rules', body);
+      return normalizeRateLimitRule(unwrapApiData(data));
+    },
+    onSuccess: () => {
+      invalidateRateLimitRuleQueries(qc);
+      toast.success('Đã thêm rule giới hạn truy cập.');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Không thể thêm rule giới hạn truy cập')),
+  });
+}
+
+export function useEnableRateLimitRule() {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await apiClient.post(`/admin/rate-limit-rules/${id}/enable`);
+      return normalizeRateLimitRule(unwrapApiData(data));
+    },
+    onSuccess: (_result, id) => {
+      invalidateRateLimitRuleQueries(qc, id);
+      toast.success('Đã bật rule giới hạn truy cập.');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Không thể bật rule giới hạn truy cập')),
+  });
+}
+
+export function useDisableRateLimitRule() {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await apiClient.post(`/admin/rate-limit-rules/${id}/disable`);
+      return normalizeRateLimitRule(unwrapApiData(data));
+    },
+    onSuccess: (_result, id) => {
+      invalidateRateLimitRuleQueries(qc, id);
+      toast.success('Đã tắt rule giới hạn truy cập.');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Không thể tắt rule giới hạn truy cập')),
+  });
+}
+
+export function useResetRateLimitRuleDefaults() {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await apiClient.post(`/admin/rate-limit-rules/${id}/reset-defaults`);
+      return normalizeRateLimitRule(unwrapApiData(data));
+    },
+    onSuccess: (_result, id) => {
+      invalidateRateLimitRuleQueries(qc, id);
+      toast.success('Đã khôi phục cấu hình mặc định.');
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Không thể khôi phục cấu hình mặc định')),
   });
 }
 
@@ -380,8 +839,7 @@ export function useUpdateBranchStatus() {
       return normalizeBranch(unwrapApiData(data));
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin', 'branches'] });
-      qc.invalidateQueries({ queryKey: ['public', 'branches'] });
+      refreshBranchStatusDependentQueries(qc);
       toast.success('Cập nhật trạng thái thành công');
     },
     onError: (error) => toast.error(getApiErrorMessage(error, 'Cập nhật trạng thái thất bại')),
@@ -402,6 +860,54 @@ export function useAdminDoctors(params?: Record<string, string>) {
     staleTime: 30_000,
     refetchOnWindowFocus: false,
     placeholderData: (previousData) => previousData,
+  });
+}
+
+type DoctorOptionsMode = 'OPERATIONAL' | 'ADMIN' | 'BOOKABLE';
+
+type DoctorOptionsQueryParams = {
+  branchId?: string;
+  specialtyId?: string;
+  status?: string;
+  operationalReady?: boolean | string;
+  mode?: DoctorOptionsMode;
+  q?: string;
+};
+
+function cleanDoctorOptionParams(params: DoctorOptionsQueryParams): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(params)
+      .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+      .map(([key, value]) => [key, String(value)]),
+  );
+}
+
+export function useInternalDoctorOptions(params: DoctorOptionsQueryParams) {
+  const queryParams = cleanDoctorOptionParams(params);
+
+  return useQuery<DoctorOption[]>({
+    queryKey: adminQueryKeys.doctorOptions(queryParams),
+    queryFn: async () => {
+      const { data } = await apiClient.get('/admin/doctors/options', { params: queryParams });
+      return unwrapPageItems<unknown>(data).map(normalizeDoctorOption);
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+export function useOperationalDoctorOptions(params?: Omit<DoctorOptionsQueryParams, 'mode' | 'status' | 'operationalReady'>) {
+  return useInternalDoctorOptions({
+    ...params,
+    mode: 'OPERATIONAL',
+  });
+}
+
+export function useAdminDoctorOptions(params?: Omit<DoctorOptionsQueryParams, 'mode' | 'operationalReady'>) {
+  return useInternalDoctorOptions({
+    ...params,
+    mode: 'ADMIN',
   });
 }
 
@@ -650,26 +1156,7 @@ export function useAdminDoctorSchedules(params?: Record<string, string>) {
 
 
 export function useAdminDoctorScheduleDoctorOptions() {
-  return useQuery<DoctorScheduleDoctorOption[]>({
-    queryKey: adminQueryKeys.doctorScheduleDoctorOptions,
-    queryFn: async () => {
-      const { data } = await apiClient.get('/admin/doctor-schedules/doctors/options');
-      const rawItems = Array.isArray(data) ? data : unwrapApiData<unknown[]>(data);
-      return rawItems.map((item) => {
-        const value = item as Record<string, unknown>;
-        return {
-          id: String(value.id ?? ''),
-          fullName: String(value.fullName ?? ''),
-          displayTitleVn:
-            typeof value.displayTitleVn === 'string' ? value.displayTitleVn : undefined,
-          branchId: value.branchId != null ? String(value.branchId) : undefined,
-          branchNameVn:
-            typeof value.branchNameVn === 'string' ? value.branchNameVn : undefined,
-          status: typeof value.status === 'string' ? value.status : undefined,
-        } satisfies DoctorScheduleDoctorOption;
-      });
-    },
-  });
+  return useOperationalDoctorOptions();
 }
 
 export function useUpsertDoctorSchedule() {
@@ -768,6 +1255,33 @@ export function useAdminDoctorLeaves(params?: Record<string, string>) {
   });
 }
 
+export function useAffectedAppointmentsForLeave(leaveId?: string, enabled = true) {
+  return useQuery<DoctorCancellationAffectedAppointment[]>({
+    queryKey: adminQueryKeys.doctorLeaveAffectedAppointments(leaveId),
+    queryFn: async () => {
+      const { data } = await apiClient.get(
+        `/admin/doctor-leaves/${encodeURIComponent(leaveId ?? '')}/affected-appointments`,
+      );
+      const payload = unwrapApiData<unknown>(data);
+      const directItems =
+        payload && typeof payload === 'object' && !Array.isArray(payload)
+          ? (payload as Record<string, unknown>).affectedAppointments ??
+            (payload as Record<string, unknown>).appointments
+          : undefined;
+      const items = Array.isArray(directItems) ? directItems : unwrapPageItems<unknown>(data);
+      return items.map(normalizeAffectedAppointment);
+    },
+    enabled: Boolean(leaveId) && enabled,
+    retry: false,
+  });
+}
+
+type DoctorLeaveReviewBody = {
+  reviewNote?: string;
+  enableRecoveryFlow?: boolean;
+  resolveConflictsWithRecovery?: boolean;
+};
+
 export function useReviewDoctorLeave() {
   const qc = useQueryClient();
   return useMutation({
@@ -778,7 +1292,7 @@ export function useReviewDoctorLeave() {
     }: {
       id: string;
       action: 'approve' | 'reject';
-      body?: { reviewNote?: string };
+      body?: DoctorLeaveReviewBody;
     }) => {
       const { data } = await apiClient.patch(
         `/admin/doctor-leaves/${id}/${action}`,
@@ -786,9 +1300,16 @@ export function useReviewDoctorLeave() {
       );
       return normalizeLeaveRequest(unwrapApiData(data));
     },
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
       qc.invalidateQueries({ queryKey: ['admin', 'doctor-leaves'] });
-      toast.success('Cập nhật đơn nghỉ thành công');
+      qc.invalidateQueries({ queryKey: ['reception', 'queue'] });
+      qc.invalidateQueries({ queryKey: ['reception', 'queue', 'summary'] });
+      qc.invalidateQueries({ queryKey: ['reception', 'follow-up'] });
+      if (variables.action === 'approve' && variables.body?.enableRecoveryFlow) {
+        toast.success('Đã duyệt nghỉ và gửi đề xuất lịch thay thế cho các bệnh nhân bị ảnh hưởng.');
+      } else {
+        toast.success('Cập nhật đơn nghỉ thành công');
+      }
     },
     onError: (error) => toast.error(getApiErrorMessage(error, 'Cập nhật đơn nghỉ thất bại')),
   });
@@ -1066,7 +1587,7 @@ function resolveAppointmentSummaryDestination(
     return null;
   }
 
-  if (role === 'OPERATIONS_ADMIN' || role === 'SYSTEM_ADMIN') {
+  if (role === 'OPERATIONS_ADMIN') {
     return '/topic/appointments/summary';
   }
 
@@ -1504,8 +2025,10 @@ export function useAppointmentSummaryRealtime(
 
     const invalidateAppointmentListQueries = () => {
       invalidateActive(['admin', 'appointments']);
-      invalidateActive(['reception', 'queue']);
-      invalidateActive(['reception', 'queue', 'summary']);
+      if (userRole === 'STAFF') {
+        invalidateActive(['reception', 'queue']);
+        invalidateActive(['reception', 'queue', 'summary']);
+      }
     };
 
     const invalidateAllAppointmentViews = () => {

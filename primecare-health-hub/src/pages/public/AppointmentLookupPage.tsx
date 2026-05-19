@@ -186,8 +186,11 @@ export default function AppointmentLookupPage() {
     : isEn
       ? `You can request another code in ${resendSecondsRemaining} seconds.`
       : `Có thể gửi lại sau ${resendSecondsRemaining} giây`;
-  const cancellableStatuses = new Set(['REQUESTED', 'CONFIRMED']);
-  const canCancelAppointment = Boolean(appointmentLookup?.accessToken && appointmentLookup?.appointment?.status && cancellableStatuses.has(appointmentLookup.appointment.status));
+  const canCancelAppointment = Boolean(
+    appointmentLookup?.accessToken &&
+      appointmentLookup?.appointment?.canCancel === true,
+  );
+  const cancelBlockedReason = appointmentLookup?.appointment?.cancelBlockedReason;
 
   const appointmentPdfUrl = useMemo(() => {
     if (!appointmentLookup?.accessToken || !appointmentLookup.appointment?.code) return null;
@@ -304,7 +307,15 @@ export default function AppointmentLookupPage() {
         reason: cancelReason.trim() || undefined,
       });
 
-      setAppointmentLookup((prev) => prev ? ({ ...prev, appointment: { ...prev.appointment, status: response.status || 'CANCELLED' } }) : prev);
+      setAppointmentLookup((prev) => prev ? ({
+        ...prev,
+        appointment: {
+          ...prev.appointment,
+          status: response.status || 'CANCELLED',
+          canCancel: false,
+          cancelBlockedReason: response.message,
+        },
+      }) : prev);
       toast.success(response.message || (isEn ? 'Appointment cancelled successfully.' : 'Đã hủy lịch hẹn thành công.'));
     } catch (error: unknown) {
       toast.error(getApiErrorMessage(error, isEn ? 'Unable to cancel this appointment right now.' : 'Chưa thể hủy lịch hẹn lúc này.'));
@@ -435,11 +446,11 @@ export default function AppointmentLookupPage() {
                 <p className="mt-1 break-words text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
                   {canCancelAppointment
                     ? isEn
-                      ? 'Available while the appointment is requested or confirmed. Reason is optional.'
-                      : 'Khả dụng khi lịch đang chờ xác nhận hoặc đã xác nhận. Lý do không bắt buộc.'
+                      ? 'Online cancellation is available for this appointment. Reason is optional.'
+                      : 'Lịch hẹn này đang được phép hủy trực tuyến. Lý do không bắt buộc.'
                     : isEn
-                      ? 'Online cancellation is unavailable for this current status.'
-                      : 'Không thể hủy trực tuyến ở trạng thái hiện tại.'}
+                      ? cancelBlockedReason || 'Online cancellation is unavailable for this appointment.'
+                      : cancelBlockedReason || 'Không thể hủy trực tuyến lịch hẹn này.'}
                 </p>
               </div>
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">

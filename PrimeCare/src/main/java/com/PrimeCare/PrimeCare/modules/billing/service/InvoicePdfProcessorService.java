@@ -68,7 +68,7 @@ public class InvoicePdfProcessorService {
                     InternalNotificationService.SEVERITY_CRITICAL,
                     "Tạo PDF hóa đơn thất bại",
                     "Tạo PDF hóa đơn thất bại cho job " + jobId + ".",
-                    "/app/admin/notifications",
+                    "/app/admin/dashboard",
                     "INVOICE",
                     invoiceId,
                     java.util.Map.of("jobId", jobId, "error", e.getMessage() != null ? e.getMessage() : "")

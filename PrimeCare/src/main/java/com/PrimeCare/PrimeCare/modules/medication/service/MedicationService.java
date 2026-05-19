@@ -1,5 +1,6 @@
 package com.PrimeCare.PrimeCare.modules.medication.service;
 
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.medication.dto.request.CreateMedicationRequest;
 import com.PrimeCare.PrimeCare.modules.medication.dto.request.UpdateMedicationRequest;
 import com.PrimeCare.PrimeCare.modules.medication.dto.response.MedicationResponse;
@@ -17,11 +18,15 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 @Service
 @RequiredArgsConstructor
 public class MedicationService {
 
     private final MedicationRepository medicationRepository;
+    private final AuditLogService auditLogService;
 
     @Transactional
     public MedicationResponse create(CreateMedicationRequest req) {
@@ -42,13 +47,16 @@ public class MedicationService {
                                       .status(MedicationStatus.ACTIVE)
                                       .build();
 
-        return toResponse(medicationRepository.save(entity));
+        entity = medicationRepository.save(entity);
+        auditLogService.log(null, "CREATE_MEDICATION", "MEDICATION", entity.getId(), null, snapshotMedication(entity));
+        return toResponse(entity);
     }
 
     @Transactional
     public MedicationResponse update(Long id, UpdateMedicationRequest req) {
         Medication entity = medicationRepository.findById(id)
                                                 .orElseThrow(() -> new ApiException(ErrorCode.MEDICATION_NOT_FOUND));
+        Map<String, Object> before = snapshotMedication(entity);
 
         if (req.getName() != null && !req.getName().isBlank()) entity.setName(req.getName().trim());
         if (req.getGenericName() != null) entity.setGenericName(StringUtil.trimToNull(req.getGenericName()));
@@ -60,7 +68,9 @@ public class MedicationService {
         if (req.getContraindicationNote() != null)
             entity.setContraindicationNote(StringUtil.trimToNull(req.getContraindicationNote()));
 
-        return toResponse(medicationRepository.save(entity));
+        entity = medicationRepository.save(entity);
+        auditLogService.log(null, "UPDATE_MEDICATION", "MEDICATION", entity.getId(), before, snapshotMedication(entity));
+        return toResponse(entity);
     }
 
     @Transactional(readOnly = true)
@@ -110,9 +120,12 @@ public class MedicationService {
     public MedicationResponse updateStatus(Long id, UpdateMedicationStatusRequest req) {
         Medication entity = medicationRepository.findById(id)
                                                 .orElseThrow(() -> new ApiException(ErrorCode.MEDICATION_NOT_FOUND));
+        Map<String, Object> before = snapshotMedication(entity);
 
         entity.setStatus(req.getStatus());
-        return toResponse(medicationRepository.save(entity));
+        entity = medicationRepository.save(entity);
+        auditLogService.log(null, "UPDATE_MEDICATION_STATUS", "MEDICATION", entity.getId(), before, snapshotMedication(entity));
+        return toResponse(entity);
     }
 
     private MedicationResponse toResponse(Medication e) {
@@ -129,5 +142,18 @@ public class MedicationService {
                                  .contraindicationNote(e.getContraindicationNote())
                                  .status(e.getStatus())
                                  .build();
+    }
+
+    private Map<String, Object> snapshotMedication(Medication medication) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("id", medication.getId());
+        data.put("code", medication.getCode());
+        data.put("name", medication.getName());
+        data.put("genericName", medication.getGenericName());
+        data.put("strength", medication.getStrength());
+        data.put("dosageForm", medication.getDosageForm());
+        data.put("unit", medication.getUnit());
+        data.put("status", medication.getStatus() != null ? medication.getStatus().name() : null);
+        return data;
     }
 }

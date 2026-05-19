@@ -61,7 +61,7 @@ export default function PatientOverviewPage() {
           <CardContent className="relative p-6 md:p-8">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.35),_transparent_35%),radial-gradient(circle_at_bottom_left,_rgba(245,158,11,0.25),_transparent_30%)]" />
             <div className="relative space-y-6">
-              <div className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-sky-200">
+              <div className="inline-flex items-center rounded-full border border-white/10 bg-foreground/5 px-3 py-1 text-xs font-medium text-sky-200">
                 Hồ sơ cá nhân PrimeCare
               </div>
               <div>
@@ -76,7 +76,7 @@ export default function PatientOverviewPage() {
                 {quickLinks.map((item) => {
                   const Icon = item.icon;
                   return (
-                    <Button key={item.href} asChild variant="secondary" className="justify-start rounded-2xl border border-white/10 bg-white/10 px-4 py-6 text-white hover:bg-white/15">
+                    <Button key={item.href} asChild variant="secondary" className="justify-start rounded-2xl border border-white/10 bg-foreground/10 px-4 py-6 text-white hover:bg-foreground/20">
                       <Link to={item.href}>
                         <Icon className="mr-2 h-4 w-4" />
                         {item.label}
@@ -152,7 +152,7 @@ export default function PatientOverviewPage() {
               <div className="grid gap-4 rounded-[24px] bg-slate-950 p-5 text-white md:grid-cols-[1.4fr_0.8fr]">
                 <div className="space-y-4">
                   <div>
-                    <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-sky-200">
+                    <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/10 bg-foreground/5 px-3 py-1 text-xs font-medium text-sky-200">
                       <CalendarClock className="h-3.5 w-3.5" />
                       LỊCH HẸN SẮP TỚI
                     </div>
@@ -160,24 +160,24 @@ export default function PatientOverviewPage() {
                     <p className="mt-1 text-sm text-slate-300">{data.nextAppointment.doctorName || 'Bác sĩ đang cập nhật'} · {data.nextAppointment.branchName || 'Cơ sở đang cập nhật'}</p>
                   </div>
                   <div className="grid gap-3 md:grid-cols-2">
-                    <div className="rounded-2xl bg-white/5 p-4">
+                    <div className="rounded-2xl bg-foreground/5 p-4">
                       <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Ngày khám</p>
                       <p className="mt-2 font-medium">{formatDate(data.nextAppointment.visitDate)}</p>
                     </div>
-                    <div className="rounded-2xl bg-white/5 p-4">
+                    <div className="rounded-2xl bg-foreground/5 p-4">
                       <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Khung giờ</p>
                       <p className="mt-2 font-medium">{data.nextAppointment.etaStart || data.nextAppointment.session || 'Đang cập nhật'}</p>
                     </div>
                   </div>
                 </div>
-                <div className="space-y-3 rounded-[24px] bg-white/5 p-4">
+                <div className="space-y-3 rounded-[24px] bg-foreground/5 p-4">
                   <div>
                     <p className="text-sm text-slate-400">Mã phiếu hẹn</p>
                     <p className="mt-1 font-semibold">{data.nextAppointment.code}</p>
                   </div>
                   <div>
                     <p className="text-sm text-slate-400">Trạng thái</p>
-                    <Badge variant="secondary" className="mt-2 bg-white/10 text-white hover:bg-white/10">{data.nextAppointment.status || 'Đang xử lý'}</Badge>
+                    <Badge variant="secondary" className="mt-2 bg-foreground/10 text-white hover:bg-foreground/10">{data.nextAppointment.status || 'Đang xử lý'}</Badge>
                   </div>
                   <Button asChild className="mt-4 w-full rounded-full bg-primary text-primary-foreground hover:bg-primary/90">
                     <Link to="/me/appointments">Xem lịch sử đặt lịch</Link>

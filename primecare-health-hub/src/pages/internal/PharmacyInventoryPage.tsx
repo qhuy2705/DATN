@@ -47,7 +47,7 @@ type InventoryTab = 'inventory' | 'batches' | 'expiring';
 
 interface BatchFormState {
   medicationId: string;
-  batchCode: string;
+  batchNumber: string;
   quantity: string;
   expiryDate: string;
   status: string;
@@ -62,7 +62,7 @@ const PAGE_SIZE = '20';
 
 const EMPTY_BATCH_FORM: BatchFormState = {
   medicationId: '',
-  batchCode: '',
+  batchNumber: '',
   quantity: '',
   expiryDate: '',
   status: '',
@@ -220,7 +220,7 @@ export default function PharmacyInventoryPage() {
     setDialogState({ mode: 'edit', batch });
     setForm({
       medicationId: batch.medicationId,
-      batchCode: batch.batchCode,
+      batchNumber: batch.batchNumber ?? batch.batchCode,
       quantity: String(batch.quantity),
       expiryDate: toDateInputValue(batch.expiryDate),
       status: batch.status ?? '',
@@ -241,7 +241,7 @@ export default function PharmacyInventoryPage() {
       toast.error('Vui lòng nhập mã thuốc.');
       return;
     }
-    if (!form.batchCode.trim()) {
+    if (!form.batchNumber.trim()) {
       toast.error('Vui lòng nhập mã lô.');
       return;
     }
@@ -257,7 +257,7 @@ export default function PharmacyInventoryPage() {
     if (isCreate) {
       await createBatch.mutateAsync({
         medicationId: form.medicationId.trim(),
-        batchCode: form.batchCode.trim(),
+        batchNumber: form.batchNumber.trim(),
         quantity,
         expiryDate: form.expiryDate,
         status: form.status.trim() || undefined,
@@ -267,7 +267,7 @@ export default function PharmacyInventoryPage() {
         id: dialogState.batch.id,
         payload: {
           medicationId: form.medicationId.trim() || undefined,
-          batchCode: form.batchCode.trim(),
+          batchNumber: form.batchNumber.trim(),
           quantity,
           expiryDate: form.expiryDate,
           status: form.status.trim() || undefined,
@@ -323,9 +323,9 @@ export default function PharmacyInventoryPage() {
 
   const batchColumns: Column<MedicationBatch>[] = [
     {
-      key: 'batchCode',
+      key: 'batchNumber',
       header: 'Mã lô',
-      cell: (row) => <span className="font-mono text-sm">{row.batchCode || row.batchId}</span>,
+      cell: (row) => <span className="font-mono text-sm">{row.batchNumber || row.batchCode || row.batchId}</span>,
     },
     {
       key: 'medicationName',
@@ -491,7 +491,7 @@ export default function PharmacyInventoryPage() {
               onPageChange={setBatchPage}
               isLoading={batchesQuery.isLoading}
               emptyMessage="Không có lô thuốc"
-              keyExtractor={(row) => row.id || row.batchCode}
+              keyExtractor={(row) => row.id || row.batchNumber || row.batchCode}
               actions={(row) => (
                 <Button size="icon" variant="outline" onClick={() => openEditDialog(row)} aria-label="Sửa lô thuốc">
                   <SquarePen className="h-4 w-4" />
@@ -509,7 +509,7 @@ export default function PharmacyInventoryPage() {
               onPageChange={setExpiringPage}
               isLoading={expiringQuery.isLoading}
               emptyMessage="Không có lô sắp hết hạn"
-              keyExtractor={(row) => row.id || row.batchCode}
+              keyExtractor={(row) => row.id || row.batchNumber || row.batchCode}
               actions={(row) => (
                 <Button size="icon" variant="outline" onClick={() => openEditDialog(row)} aria-label="Sửa lô thuốc">
                   <SquarePen className="h-4 w-4" />
@@ -543,8 +543,8 @@ export default function PharmacyInventoryPage() {
               <Label htmlFor="batch-code">Mã lô *</Label>
               <Input
                 id="batch-code"
-                value={form.batchCode}
-                onChange={(event) => setForm((current) => ({ ...current, batchCode: event.target.value }))}
+                value={form.batchNumber}
+                onChange={(event) => setForm((current) => ({ ...current, batchNumber: event.target.value }))}
               />
             </div>
             <div className="space-y-2">

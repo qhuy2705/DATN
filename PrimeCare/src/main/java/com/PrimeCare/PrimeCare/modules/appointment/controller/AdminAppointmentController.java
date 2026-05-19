@@ -3,11 +3,15 @@ package com.PrimeCare.PrimeCare.modules.appointment.controller;
 import com.PrimeCare.PrimeCare.config.PaginationConfig;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.request.*;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AppointmentAdminResponse;
+import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AppointmentBookingRestrictionSummaryResponse;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AppointmentStatusSummaryResponse;
 import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentAdminService;
+import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentBookingRestrictionSummaryService;
 import com.PrimeCare.PrimeCare.shared.common.ApiResponse;
 import com.PrimeCare.PrimeCare.shared.common.PageResponse;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentStatus;
+import com.PrimeCare.PrimeCare.shared.exception.ApiException;
+import com.PrimeCare.PrimeCare.shared.exception.ErrorCode;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
@@ -18,6 +22,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/admin/appointments")
@@ -25,6 +30,7 @@ import java.time.LocalDate;
 public class AdminAppointmentController {
 
     private final AppointmentAdminService appointmentAdminService;
+    private final AppointmentBookingRestrictionSummaryService appointmentBookingRestrictionSummaryService;
 
     @GetMapping
     @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
@@ -78,6 +84,12 @@ public class AdminAppointmentController {
     @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
     public ApiResponse<AppointmentAdminResponse> detail(@PathVariable Long id) {
         return ApiResponse.ok("OK", appointmentAdminService.getDetail(id));
+    }
+
+    @GetMapping("/{id}/booking-restriction-summary")
+    @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
+    public ApiResponse<AppointmentBookingRestrictionSummaryResponse> bookingRestrictionSummary(@PathVariable Long id) {
+        return ApiResponse.ok("OK", appointmentBookingRestrictionSummaryService.getSummary(id));
     }
 
     @PostMapping("/{id}/claim")
@@ -143,7 +155,7 @@ public class AdminAppointmentController {
         Long currentUserId = Long.valueOf(authentication.getName());
         return ApiResponse.ok(
                 "Xác nhận lịch hẹn thành công",
-                appointmentAdminService.confirm(id, currentUserId, request.getNote())
+                appointmentAdminService.confirm(id, currentUserId, request)
         );
     }
 
@@ -152,21 +164,85 @@ public class AdminAppointmentController {
     public ApiResponse<AppointmentAdminResponse> cancel(
             @PathVariable Long id,
             Authentication authentication,
-            @Valid @RequestBody AppointmentCancelRequest request
+            @Valid @RequestBody(required = false) AppointmentCancelRequest request
     ) {
+        requireCancelRequest(request);
         Long currentUserId = Long.valueOf(authentication.getName());
         return ApiResponse.ok(
                 "Đã hủy lịch hẹn",
-                appointmentAdminService.cancel(id, currentUserId, request.getReason())
+                appointmentAdminService.cancel(
+                        id,
+                        currentUserId,
+                        request.getReason(),
+                        request.getCancellationReasonType(),
+                        Boolean.TRUE.equals(request.getEnableRecoveryFlow()),
+                        Boolean.TRUE.equals(request.getCountAsViolation()),
+                        request.getViolationNote()
+                )
+        );
+    }
+
+    private void requireCancelRequest(AppointmentCancelRequest request) {
+        if (request == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Cancellation reason is required.");
+        }
+    }
+
+    @PostMapping("/{id}/call-result")
+    @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
+    public ApiResponse<AppointmentAdminResponse> callResult(
+            @PathVariable Long id,
+            Authentication authentication,
+            @Valid @RequestBody AppointmentCallResultRequest request
+    ) {
+        Long currentUserId = Long.valueOf(authentication.getName());
+        return ApiResponse.ok(
+                "Đã ghi nhận kết quả cuộc gọi",
+                appointmentAdminService.recordCallResult(
+                        id,
+                        currentUserId,
+                        request.getOutcome(),
+                        request.getNote(),
+                        Boolean.TRUE.equals(request.getSendFallbackEmail())
+                )
+        );
+    }
+
+    @PostMapping("/{id}/wrong-contact-violation")
+    @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
+    public ApiResponse<AppointmentAdminResponse> wrongContactViolation(
+            @PathVariable Long id,
+            Authentication authentication,
+            @Valid @RequestBody WrongContactViolationRequest request
+    ) {
+        Long currentUserId = Long.valueOf(authentication.getName());
+        return ApiResponse.ok(
+                "Đã ghi nhận vi phạm sai thông tin liên hệ",
+                appointmentAdminService.markWrongContactViolation(id, currentUserId, request.getReason())
+        );
+    }
+
+    @PostMapping("/doctor-cancellation-recovery")
+    @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
+    public ApiResponse<List<AppointmentAdminResponse>> recoverDoctorCancellation(
+            Authentication authentication,
+            @Valid @RequestBody DoctorCancellationRecoveryRequest request
+    ) {
+        Long currentUserId = Long.valueOf(authentication.getName());
+        return ApiResponse.ok(
+                "Đã kích hoạt luồng hỗ trợ dời lịch cho các lịch bị ảnh hưởng",
+                appointmentAdminService.recoverDoctorCancellationRange(currentUserId, request)
         );
     }
 
     @PostMapping("/check-in")
-    @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
+    @Deprecated(since = "2026-05", forRemoval = false)
+    @PreAuthorize("hasRole('STAFF')")
     public ApiResponse<AppointmentAdminResponse> checkIn(
             Authentication authentication,
             @Valid @RequestBody AppointmentCheckInRequest request
     ) {
+        // Deprecated: QR check-in belongs to Reception. Use /api/reception/appointments/check-in/qr.
         Long currentUserId = Long.valueOf(authentication.getName());
         return ApiResponse.ok(
                 "Check-in thành công",
@@ -229,6 +305,25 @@ public class AdminAppointmentController {
         return ApiResponse.ok(
                 "Đã xử lý follow-up cho lịch no-show",
                 appointmentAdminService.resolveNoShowAsClosed(
+                        id,
+                        currentUserId,
+                        request != null ? request.getNote() : null
+                )
+        );
+    }
+
+    @PostMapping("/{id}/resolve-follow-up")
+    @PreAuthorize("hasAnyRole('OPERATIONS_ADMIN','STAFF')")
+    public ApiResponse<AppointmentAdminResponse> resolveFollowUp(
+            @PathVariable Long id,
+            Authentication authentication,
+            @RequestBody(required = false) AppointmentNoShowRequest request
+    ) {
+        Long currentUserId = Long.valueOf(authentication.getName());
+
+        return ApiResponse.ok(
+                "Đã xử lý follow-up cho lịch hẹn",
+                appointmentAdminService.resolveFollowUpAsClosed(
                         id,
                         currentUserId,
                         request != null ? request.getNote() : null

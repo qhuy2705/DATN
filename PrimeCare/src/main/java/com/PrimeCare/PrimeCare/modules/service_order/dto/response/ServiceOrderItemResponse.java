@@ -24,6 +24,9 @@ public class ServiceOrderItemResponse {
     private Integer queueNo;
     private ServiceOrderItemStatus status;
     private ServiceResultStatus resultStatus;
+    private LocalDateTime cancelledAt;
+    private String refundReason;
+    private LocalDateTime refundedAt;
     private String resultTextVn;
     private String resultTextEn;
     private String resultDataJson;

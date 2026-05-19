@@ -32,6 +32,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class EncounterAiSummaryService {
 
+    private static final int CLINICAL_TEXT_LIMIT = 1200;
+    private static final int SHORT_TEXT_LIMIT = 500;
+
     private final EncounterRepository encounterRepository;
     private final UserRepository userRepository;
     private final ServiceOrderRepository serviceOrderRepository;
@@ -100,7 +103,7 @@ public class EncounterAiSummaryService {
                 .count();
 
         List<String> pieces = new ArrayList<>();
-        pieces.add("Bệnh nhân " + safe(encounter.getPatientFullNameSnapshot()));
+        pieces.add(demographicSummary(encounter));
         if (encounter.getChiefComplaint() != null && !encounter.getChiefComplaint().isBlank()) {
             pieces.add("lý do khám: " + encounter.getChiefComplaint());
         }
@@ -246,23 +249,89 @@ public class EncounterAiSummaryService {
     }
 
     private String buildAiPrompt(Encounter encounter, String quickSummary, List<String> highlightedResults, List<String> riskFlags, List<String> nextSteps) {
+        String sanitizedQuickSummary = sanitizeForAi(encounter, quickSummary, CLINICAL_TEXT_LIMIT);
+        List<String> sanitizedHighlightedResults = sanitizeListForAi(encounter, highlightedResults, SHORT_TEXT_LIMIT);
+        List<String> sanitizedRiskFlags = sanitizeListForAi(encounter, riskFlags, SHORT_TEXT_LIMIT);
+        List<String> sanitizedNextSteps = sanitizeListForAi(encounter, nextSteps, SHORT_TEXT_LIMIT);
+
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("patientName", encounter.getPatientFullNameSnapshot());
-        payload.put("chiefComplaint", encounter.getChiefComplaint());
-        payload.put("clinicalNote", encounter.getClinicalNote());
-        payload.put("preliminaryDiagnosis", encounter.getPreliminaryDiagnosis());
-        payload.put("finalDiagnosis", encounter.getFinalDiagnosis());
-        payload.put("conclusion", encounter.getConclusion());
-        payload.put("quickSummary", quickSummary);
-        payload.put("highlightedResults", highlightedResults);
-        payload.put("riskFlags", riskFlags);
-        payload.put("nextSteps", nextSteps);
+        payload.put("patient", patientContext(encounter));
+        payload.put("chiefComplaint", sanitizeForAi(encounter, encounter.getChiefComplaint(), CLINICAL_TEXT_LIMIT));
+        payload.put("clinicalNote", sanitizeForAi(encounter, encounter.getClinicalNote(), CLINICAL_TEXT_LIMIT));
+        payload.put("preliminaryDiagnosis", sanitizeForAi(encounter, encounter.getPreliminaryDiagnosis(), SHORT_TEXT_LIMIT));
+        payload.put("finalDiagnosis", sanitizeForAi(encounter, encounter.getFinalDiagnosis(), SHORT_TEXT_LIMIT));
+        payload.put("conclusion", sanitizeForAi(encounter, encounter.getConclusion(), SHORT_TEXT_LIMIT));
+        payload.put("quickSummary", sanitizedQuickSummary);
+        payload.put("highlightedResults", sanitizedHighlightedResults);
+        payload.put("riskFlags", sanitizedRiskFlags);
+        payload.put("nextSteps", sanitizedNextSteps);
         try {
             return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(payload)
                     + "\nHãy soạn một ghi chú tóm tắt ngắn cho bác sĩ bằng tiếng Việt, chia 2-3 câu, không kết luận vượt quá dữ liệu đã có.";
         } catch (Exception ex) {
-            return quickSummary + "\nĐiểm nổi bật: " + String.join("; ", highlightedResults) + "\nCảnh báo: " + String.join("; ", riskFlags);
+            return sanitizedQuickSummary
+                    + "\nĐiểm nổi bật: " + String.join("; ", sanitizedHighlightedResults)
+                    + "\nCảnh báo: " + String.join("; ", sanitizedRiskFlags);
         }
+    }
+
+    private Map<String, Object> patientContext(Encounter encounter) {
+        Map<String, Object> patient = new LinkedHashMap<>();
+        if (encounter.getPatientDobSnapshot() != null) {
+            patient.put("birthYear", encounter.getPatientDobSnapshot().getYear());
+        }
+        if (encounter.getPatientGenderSnapshot() != null) {
+            patient.put("gender", encounter.getPatientGenderSnapshot().name());
+        }
+        return patient;
+    }
+
+    private String demographicSummary(Encounter encounter) {
+        List<String> pieces = new ArrayList<>();
+        if (encounter.getPatientDobSnapshot() != null) {
+            pieces.add("sinh năm " + encounter.getPatientDobSnapshot().getYear());
+        }
+        if (encounter.getPatientGenderSnapshot() != null) {
+            pieces.add("giới tính " + encounter.getPatientGenderSnapshot().name());
+        }
+        return pieces.isEmpty() ? "Người bệnh" : "Người bệnh " + String.join(", ", pieces);
+    }
+
+    private List<String> sanitizeListForAi(Encounter encounter, List<String> values, int maxLength) {
+        if (values == null) {
+            return List.of();
+        }
+        return values.stream()
+                .map(value -> sanitizeForAi(encounter, value, maxLength))
+                .filter(value -> value != null && !value.isBlank())
+                .toList();
+    }
+
+    private String sanitizeForAi(Encounter encounter, String value, int maxLength) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String sanitized = value.trim();
+        sanitized = redactKnownValue(sanitized, encounter.getPatientFullNameSnapshot(), "[patient]");
+        sanitized = redactKnownValue(sanitized, encounter.getPatientPhoneSnapshot(), "[phone]");
+        sanitized = redactKnownValue(sanitized, encounter.getPatientEmailSnapshot(), "[email]");
+        sanitized = sanitized.replaceAll("(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", "[email]");
+        sanitized = sanitized.replaceAll("(?<!\\d)(?:\\+?84|0)\\d{9,10}(?!\\d)", "[phone]");
+        return truncate(sanitized, maxLength);
+    }
+
+    private String redactKnownValue(String source, String value, String replacement) {
+        if (source == null || source.isBlank() || value == null || value.isBlank()) {
+            return source;
+        }
+        return source.replace(value.trim(), replacement);
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, Math.max(0, maxLength - 3)).trim() + "...";
     }
 
     private String firstNonBlank(String... values) {

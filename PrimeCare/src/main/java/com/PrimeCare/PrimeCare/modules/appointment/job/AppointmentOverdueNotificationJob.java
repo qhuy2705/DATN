@@ -1,6 +1,5 @@
 package com.PrimeCare.PrimeCare.modules.appointment.job;
 
-import com.PrimeCare.PrimeCare.modules.appointment.config.AppointmentNoShowProperties;
 import com.PrimeCare.PrimeCare.modules.appointment.entity.Appointment;
 import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentRepository;
 import com.PrimeCare.PrimeCare.modules.notification.service.InternalNotificationService;
@@ -23,7 +22,6 @@ import java.util.Map;
 public class AppointmentOverdueNotificationJob {
 
     private final AppointmentRepository appointmentRepository;
-    private final AppointmentNoShowProperties noShowProperties;
     private final InternalNotificationService internalNotificationService;
 
     @Transactional
@@ -48,7 +46,7 @@ public class AppointmentOverdueNotificationJob {
 
     private void notifyStaff(Appointment appointment) {
         String message = "Lịch hẹn " + appointment.getCode() + " của bệnh nhân "
-                + appointment.getPatientFullName() + " đã quá giờ hẹn nhưng chưa check-in.";
+                + appointment.getPatientFullName() + " đã hết khung giờ hẹn nhưng chưa check-in.";
         internalNotificationService.notifyRoleOnce(
                 UserRole.STAFF,
                 "APPOINTMENT_OVERDUE_CHECK_IN",
@@ -62,16 +60,15 @@ public class AppointmentOverdueNotificationJob {
                         "appointmentCode", appointment.getCode(),
                         "visitDate", appointment.getVisitDate() != null ? appointment.getVisitDate().toString() : "",
                         "etaStart", appointment.getEtaStart() != null ? appointment.getEtaStart().toString() : "",
-                        "graceMinutes", noShowProperties.effectiveGraceMinutes()
+                        "etaEnd", appointment.getEtaEnd() != null ? appointment.getEtaEnd().toString() : ""
                 )
         );
     }
 
     private LocalTime overdueCutoffTime(LocalDateTime now, LocalDate today) {
-        LocalDateTime cutoff = now.minusMinutes(noShowProperties.effectiveGraceMinutes());
-        if (!cutoff.toLocalDate().equals(today)) {
+        if (!now.toLocalDate().equals(today)) {
             return LocalTime.MIN;
         }
-        return cutoff.toLocalTime();
+        return now.toLocalTime();
     }
 }

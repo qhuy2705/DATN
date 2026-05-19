@@ -7,7 +7,7 @@ SET @now = NOW(6);
 SET @today = CURDATE();
 SET @yesterday = DATE_SUB(@today, INTERVAL 1 DAY);
 SET @tomorrow = DATE_ADD(@today, INTERVAL 1 DAY);
-SET @pwd = '$2a$10$7EqJtq98hPqEX7fNZaFWoOHiJ9UEdxfCWsQc0gnXkE7bCrsZ.EBC6';
+SET @pwd = '$2a$10$LFdiAYWtWGs.F4n77nlz6.QH5jaQrRkK9tO4hG06UN9.CxnwEqYSi';
 
 -- -----------------------------------------------------------------------------
 -- 1) Master data: branches, sessions, specialties

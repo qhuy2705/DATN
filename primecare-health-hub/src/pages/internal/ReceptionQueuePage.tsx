@@ -5,6 +5,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Activity,
   AlertTriangle,
+  Camera,
   CheckCircle2,
   Clock3,
   DoorOpen,
@@ -19,14 +20,23 @@ import { Button } from '@/components/ui/button';
 import { FilterBar } from '@/components/FilterBar';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { LivePulseBadge } from '@/components/LivePulseBadge';
 import {
-  useMarkArrived,
   useManualCheckIn,
+  useQrCheckIn,
   useReceptionQueue,
   useReceptionQueueSummary,
 } from '@/hooks/use-reception-data';
-import { useBranchSpecialties, useBranches, useDoctors, useSpecialties } from '@/hooks/use-public-data';
+import { useOperationalDoctorOptions } from '@/hooks/use-admin-data';
+import { useBranchSpecialties, useBranches, useSpecialties } from '@/hooks/use-public-data';
 import {
   buildArrivalStatusOptions,
   buildSourceTypeOptions,
@@ -35,29 +45,37 @@ import {
 } from '@/lib/filter-options';
 import { toLocalDateInputValue } from '@/lib/date';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
-import type { Appointment, ReceptionQueueSummary } from '@/types/api';
-import { isAppointmentOverdue } from '@/lib/appointment-utils';
-import { OverdueBadge } from '@/components/OverdueBadge';
+import type {
+  Appointment,
+  ReceptionQueueSummary,
+} from '@/types/api';
+import {
+  getCheckedInLateLabel,
+  isAppointmentOverdue,
+  isLateForCheckIn,
+} from '@/lib/appointment-utils';
+import {
+  CheckedInLateBadge,
+  LateCheckInBadge,
+  NoShowEligibleBadge,
+} from '@/components/OverdueBadge';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { LoadingSkeleton } from '@/components/LoadingSkeleton';
+import { QrCheckInScanner } from '@/components/appointments/QrCheckInScanner';
+import { extractQrToken } from '@/lib/qr-check-in';
+import { cn } from '@/lib/utils';
+import { formatTriagePriority, getPriorityClass } from '@/lib/triage';
 
 type WorkflowFilterKey = '__all__' | 'overdue';
+type PriorityFilterKey = '__all__' | 'P1' | 'P2' | 'P3';
 
 const QUEUE_LIST_STATUSES = new Set(['REQUESTED', 'CONFIRMED', 'CHECKED_IN']);
-
-function renderPriority(value?: string) {
-  switch (value) {
-    case 'ROUTINE':
-      return 'Thông thường';
-    case 'PRIORITY':
-      return 'Ưu tiên';
-    case 'URGENT':
-      return 'Khẩn';
-    default:
-      return value || '';
-  }
-}
+const PRIORITY_FILTER_OPTIONS: Array<{ value: Exclude<PriorityFilterKey, '__all__'>; label: string }> = [
+  { value: 'P1', label: 'Ưu tiên P1' },
+  { value: 'P2', label: 'Ưu tiên P2' },
+  { value: 'P3', label: 'Ưu tiên P3' },
+];
 
 function summaryValue(
   summary: ReceptionQueueSummary | undefined,
@@ -106,43 +124,67 @@ function QueueMetricCard({
 
 function QueueRow({
   appointment,
+  displayRank,
   isActionPending,
-  onMarkArrived,
   onManualCheckIn,
   t,
   now,
 }: {
   appointment: Appointment;
+  displayRank: number;
   isActionPending: boolean;
-  onMarkArrived: (id: string) => void;
   onManualCheckIn: (id: string) => void;
   t: ReturnType<typeof useTranslation>['t'];
   now: Date;
 }) {
-  const canMarkArrived =
-    appointment.status === 'CONFIRMED' && appointment.arrivalStatus !== 'ARRIVED';
   const canCheckIn = appointment.status === 'CONFIRMED';
-  const overdue = isAppointmentOverdue(appointment, now);
+  const noShowEligible = isAppointmentOverdue(appointment, now);
+  const lateForCheckIn = !noShowEligible && isLateForCheckIn(appointment, now);
+  const checkedInLateLabel = getCheckedInLateLabel(appointment);
+  const ticketNumber = appointment.receptionQueueNo ?? appointment.queueNo;
+  const effectivePriority = appointment.triagePriority || appointment.preTriagePriority || null;
+  const priorityLabel = effectivePriority
+    ? `${appointment.triagePriority ? 'Ưu tiên tiếp nhận' : 'Gợi ý ưu tiên'}: ${formatTriagePriority(effectivePriority)}`
+    : 'Chưa phân loại';
 
   return (
     <div className="grid gap-4 rounded-lg border border-border/70 bg-card p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
       <div className="flex min-w-0 items-start gap-4">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-lg font-bold text-primary">
-          {appointment.receptionQueueNo ?? appointment.queueNo ?? '-'}
+        <div
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-lg font-bold text-primary"
+          aria-label={`Thứ tự xử lý hiện tại: ${displayRank}`}
+          title={`Thứ tự xử lý hiện tại: ${displayRank}`}
+        >
+          {displayRank}
         </div>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-semibold text-foreground">{appointment.patientFullName}</p>
             <StatusBadge status={appointment.status} />
-            {overdue ? <OverdueBadge /> : null}
+            {noShowEligible ? <NoShowEligibleBadge /> : null}
+            {lateForCheckIn ? <LateCheckInBadge /> : null}
+            {checkedInLateLabel ? <CheckedInLateBadge label={checkedInLateLabel} /> : null}
           </div>
           <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
             <Phone className="h-3.5 w-3.5" />
             {appointment.patientPhone}
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {appointment.code} · {appointment.doctorName} · {appointment.specialtyName} · {appointment.slotStart}
-          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span
+              className="rounded-full border border-border bg-muted px-2 py-0.5 font-medium text-foreground"
+              aria-label={`Số phiếu tiếp nhận: ${ticketNumber ?? 'chưa có'}`}
+              title={`Số phiếu tiếp nhận: ${ticketNumber ?? 'chưa có'}`}
+            >
+              Số phiếu {ticketNumber != null ? `#${ticketNumber}` : '—'}
+            </span>
+            <span>{appointment.code}</span>
+            <span aria-hidden="true">·</span>
+            <span>{appointment.doctorName}</span>
+            <span aria-hidden="true">·</span>
+            <span>{appointment.specialtyName}</span>
+            <span aria-hidden="true">·</span>
+            <span>{appointment.slotStart}</span>
+          </div>
           <div className="mt-2 flex flex-wrap gap-2 text-xs">
             <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">
               {appointment.branchName}
@@ -153,26 +195,19 @@ function QueueRow({
             <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">
               {getArrivalStatusLabel(appointment.arrivalStatus, t)}
             </span>
-            {appointment.triagePriority ? (
-              <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-amber-700">
-                Ưu tiên tiếp nhận: {renderPriority(appointment.triagePriority)}
-              </span>
-            ) : null}
+            <span
+              className={cn(
+                'rounded-full border px-2.5 py-1',
+                getPriorityClass(effectivePriority),
+              )}
+            >
+              {priorityLabel}
+            </span>
           </div>
         </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-        {canMarkArrived ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => onMarkArrived(appointment.id)}
-            disabled={isActionPending}
-          >
-            Đánh dấu đã đến
-          </Button>
-        ) : null}
         {canCheckIn ? (
           <Button size="sm" onClick={() => onManualCheckIn(appointment.id)} disabled={isActionPending}>
             <UserCheck className="mr-1 h-4 w-4" />
@@ -180,7 +215,7 @@ function QueueRow({
           </Button>
         ) : null}
         <Button asChild size="sm" variant="ghost">
-          <Link to={`/app/appointments/${appointment.id}/process`}>Xử lý lịch hẹn</Link>
+          <Link to={`/app/appointments/${appointment.id}/process`}>Xử lý chi tiết</Link>
         </Button>
       </div>
     </div>
@@ -197,8 +232,14 @@ export default function ReceptionQueuePage() {
   const [arrivalFilter, setArrivalFilter] = useState('__all__');
   const [sourceFilter, setSourceFilter] = useState('__all__');
   const [workflowFilter, setWorkflowFilter] = useState<WorkflowFilterKey>('__all__');
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilterKey>('__all__');
   const debouncedSearch = useDebouncedValue(search.trim(), 400);
   const [now, setNow] = useState(() => new Date());
+  const [checkInToken, setCheckInToken] = useState('');
+  const [checkInOpen, setCheckInOpen] = useState(false);
+  const [scannerActive, setScannerActive] = useState(false);
+  const [scannerError, setScannerError] = useState('');
+  const [checkInError, setCheckInError] = useState('');
 
   const today = toLocalDateInputValue();
 
@@ -211,14 +252,16 @@ export default function ReceptionQueuePage() {
 
   const doctorParams = useMemo(
     () => ({
-      size: '100',
       ...(branchFilter !== '__all__' ? { branchId: branchFilter } : {}),
       ...(specialtyFilter !== '__all__' ? { specialtyId: specialtyFilter } : {}),
     }),
     [branchFilter, specialtyFilter],
   );
-  const { data: doctorsPage } = useDoctors(doctorParams);
-  const doctors = useMemo(() => doctorsPage?.items ?? [], [doctorsPage?.items]);
+  const {
+    data: doctors = [],
+    isError: isDoctorsError,
+    isLoading: isDoctorsLoading,
+  } = useOperationalDoctorOptions(doctorParams);
 
   const arrivalOptions = useMemo(() => buildArrivalStatusOptions(t), [t]);
   const sourceOptions = useMemo(() => buildSourceTypeOptions(t), [t]);
@@ -234,6 +277,12 @@ export default function ReceptionQueuePage() {
   }, [branchFilter, specialtyFilter]);
 
   useEffect(() => {
+    if (doctorFilter === '__all__' || isDoctorsLoading) return;
+    if (doctors.some((doctor) => doctor.id === doctorFilter)) return;
+    setDoctorFilter('__all__');
+  }, [doctorFilter, doctors, isDoctorsLoading]);
+
+  useEffect(() => {
     if (specialtyFilter === '__all__') return;
     if (specialties.some((item) => item.id === specialtyFilter)) return;
     setSpecialtyFilter('__all__');
@@ -241,7 +290,7 @@ export default function ReceptionQueuePage() {
 
   useEffect(() => {
     setPage(1);
-  }, [doctorFilter, arrivalFilter, sourceFilter, workflowFilter, debouncedSearch]);
+  }, [doctorFilter, arrivalFilter, sourceFilter, workflowFilter, priorityFilter, debouncedSearch]);
 
   const summaryParams = useMemo(
     () => ({
@@ -253,12 +302,14 @@ export default function ReceptionQueuePage() {
       ...(arrivalFilter !== '__all__' ? { arrivalStatus: arrivalFilter } : {}),
       ...(sourceFilter !== '__all__' ? { sourceType: sourceFilter } : {}),
       ...(workflowFilter === 'overdue' ? { overdue: 'true' } : {}),
+      ...(priorityFilter !== '__all__' ? { triagePriority: priorityFilter } : {}),
     }),
     [
       arrivalFilter,
       branchFilter,
       debouncedSearch,
       doctorFilter,
+      priorityFilter,
       sourceFilter,
       specialtyFilter,
       today,
@@ -282,10 +333,14 @@ export default function ReceptionQueuePage() {
     refetch,
     dataUpdatedAt,
   } = useReceptionQueue(queueParams);
-  const { data: summary, isLoading: isSummaryLoading } = useReceptionQueueSummary(summaryParams);
+  const {
+    data: summary,
+    isLoading: isSummaryLoading,
+    refetch: refetchSummary,
+  } = useReceptionQueueSummary(summaryParams);
 
-  const markArrived = useMarkArrived();
   const manualCheckIn = useManualCheckIn();
+  const qrCheckIn = useQrCheckIn();
 
   const queue = useMemo(
     () =>
@@ -348,18 +403,18 @@ export default function ReceptionQueuePage() {
 
     if (summary?.overdueCount != null) {
       base.push({
-        title: 'Quá giờ',
+        title: 'Đủ điều kiện no-show',
         value: summary.overdueCount,
         icon: Clock3,
       });
     }
 
-    if (summary?.noShowFollowUpPending != null) {
+    if (summary?.followUpPending != null) {
       base.push({
-        title: 'No-show cần xử lý',
-        value: summary.noShowFollowUpPending,
+        title: 'Cần xử lý',
+        value: summary.followUpPending,
         icon: AlertTriangle,
-        to: '/app/appointments?status=NO_SHOW&followUpPending=true',
+        to: '/app/appointment-follow-ups',
       });
     }
 
@@ -367,14 +422,63 @@ export default function ReceptionQueuePage() {
   }, [isSummaryLoading, summary]);
 
   const updatedAtLabel = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString('vi-VN') : '—';
-  const isActionPending = markArrived.isPending || manualCheckIn.isPending;
+  const isActionPending = manualCheckIn.isPending;
+
+  const handleQrCheckIn = async (rawToken?: string) => {
+    const qrToken = extractQrToken(rawToken ?? checkInToken);
+
+    if (!qrToken) {
+      setCheckInError('Vui lòng nhập mã hoặc quét QR trước khi check-in.');
+      return;
+    }
+
+    try {
+      setCheckInError('');
+      await qrCheckIn.mutateAsync({ qrToken });
+      setScannerActive(false);
+      setScannerError('');
+      setCheckInOpen(false);
+      setCheckInToken('');
+      void refetch();
+      void refetchSummary();
+    } catch {
+      setScannerActive(false);
+      setCheckInError('Không thể check-in với mã này. Vui lòng kiểm tra mã hoặc thử lại.');
+      // useQrCheckIn already shows the backend message.
+    }
+  };
+
+  const handleCheckInOpenChange = (open: boolean) => {
+    setCheckInOpen(open);
+    if (!open) {
+      setScannerActive(false);
+      setScannerError('');
+      setCheckInError('');
+      setCheckInToken('');
+    }
+  };
+
+  const handleQrDetected = (rawValue: string) => {
+    const qrToken = extractQrToken(rawValue);
+    setScannerActive(false);
+    setCheckInToken(qrToken);
+    void handleQrCheckIn(qrToken);
+  };
 
   return (
     <div className="space-y-5">
       <PageHeader
         title={t('modules.receptionQueue.title')}
-        description="Danh sách lịch hẹn tại quầy, lọc nhanh và thao tác tiếp nhận."
-        actions={<LivePulseBadge label={`Realtime · cập nhật ${updatedAtLabel}`} />}
+        description="Hàng đợi staff xử lý tại quầy, không phải thứ tự vào khám. Thứ tự xử lý được sắp xếp theo trạng thái đến, mức ưu tiên đã xác nhận, giờ hẹn và thời gian đến."
+        actions={
+          <>
+            <LivePulseBadge label={`Realtime · cập nhật ${updatedAtLabel}`} />
+            <Button variant="outline" onClick={() => setCheckInOpen(true)}>
+              <Camera className="mr-2 h-4 w-4" />
+              QR Check-in
+            </Button>
+          </>
+        }
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -430,12 +534,30 @@ export default function ReceptionQueuePage() {
             {
               key: 'workflow',
               label: 'Cần xử lý',
-              options: [{ value: 'overdue', label: 'Quá giờ' }],
+              options: [{ value: 'overdue', label: 'Đủ điều kiện no-show' }],
               value: workflowFilter,
               onChange: (value) => setWorkflowFilter(value as WorkflowFilterKey),
             },
+            {
+              key: 'priority',
+              label: 'Mức ưu tiên',
+              allLabel: 'Tất cả mức ưu tiên',
+              options: PRIORITY_FILTER_OPTIONS,
+              value: priorityFilter,
+              onChange: (value) => setPriorityFilter(value as PriorityFilterKey),
+            },
           ]}
         />
+
+        {isDoctorsError ? (
+          <p className="text-sm text-destructive">
+            Không tải được danh sách bác sĩ. Vui lòng thử lại.
+          </p>
+        ) : !isDoctorsLoading && doctors.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Không có bác sĩ sẵn sàng vận hành phù hợp.
+          </p>
+        ) : null}
 
         <Input
           value={search}
@@ -460,12 +582,12 @@ export default function ReceptionQueuePage() {
           ) : isLoading ? (
             <LoadingSkeleton variant="list" count={5} />
           ) : queue.length > 0 ? (
-            queue.map((appointment) => (
+            queue.map((appointment, index) => (
               <QueueRow
                 key={appointment.id}
                 appointment={appointment}
+                displayRank={index + 1}
                 isActionPending={isActionPending}
-                onMarkArrived={(appointmentId) => markArrived.mutate(appointmentId)}
                 onManualCheckIn={(appointmentId) => manualCheckIn.mutate(appointmentId)}
                 t={t}
                 now={now}
@@ -474,7 +596,11 @@ export default function ReceptionQueuePage() {
           ) : (
             <EmptyState
               title={t('common.noData')}
-              description="Không có bệnh nhân nào trong hàng đợi tiếp nhận với bộ lọc hiện tại."
+              description={
+                priorityFilter !== '__all__'
+                  ? 'Không có bệnh nhân phù hợp với mức ưu tiên đã chọn.'
+                  : 'Không có bệnh nhân nào trong hàng đợi tiếp nhận với bộ lọc hiện tại.'
+              }
               className="min-h-48 border-0 bg-transparent"
             />
           )}
@@ -506,6 +632,87 @@ export default function ReceptionQueuePage() {
           </div>
         </div>
       )}
+
+      <Dialog open={checkInOpen} onOpenChange={handleCheckInOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Check-in bằng QR</DialogTitle>
+            <DialogDescription>
+              Quét QR bằng webcam hoặc nhập token thủ công.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-muted-foreground">
+                Giơ mã QR trên điện thoại hoặc phiếu hẹn vào khung quét.
+              </p>
+              <Button
+                type="button"
+                variant={scannerActive ? 'secondary' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setScannerError('');
+                  setCheckInError('');
+                  setScannerActive((value) => !value);
+                }}
+                disabled={qrCheckIn.isPending}
+              >
+                <Camera className="mr-2 h-4 w-4" />
+                {scannerActive ? 'Dừng quét' : 'Quét bằng webcam'}
+              </Button>
+            </div>
+
+            {scannerActive ? (
+              <QrCheckInScanner
+                active={scannerActive}
+                onDetected={handleQrDetected}
+                onError={(message) => {
+                  setScannerError(message);
+                  setScannerActive(false);
+                }}
+              />
+            ) : null}
+
+            {scannerError ? (
+              <p className="text-sm text-destructive" role="alert">
+                {scannerError}
+              </p>
+            ) : null}
+
+            <Input
+              autoFocus
+              value={checkInToken}
+              onChange={(e) => {
+                setCheckInToken(e.target.value);
+                setCheckInError('');
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && checkInToken.trim() && !qrCheckIn.isPending) {
+                  event.preventDefault();
+                  void handleQrCheckIn();
+                }
+              }}
+              placeholder="Nhập mã QR / token check-in"
+            />
+
+            {checkInError ? (
+              <p className="text-sm text-destructive" role="alert">
+                {checkInError}
+              </p>
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <Button
+              onClick={() => void handleQrCheckIn()}
+              disabled={qrCheckIn.isPending || !checkInToken.trim()}
+            >
+              {qrCheckIn.isPending ? 'Đang check-in...' : 'Check-in'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

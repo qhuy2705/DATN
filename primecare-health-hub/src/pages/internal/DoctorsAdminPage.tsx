@@ -46,6 +46,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  useAdminBranches,
   useAdminDoctors,
   useAdminDoctorsSummary,
   useProvisionDoctorAccount,
@@ -53,8 +54,14 @@ import {
   useSaveDoctor,
   useUpdateDoctorStatus,
 } from '@/hooks/use-admin-data';
-import { useBranches, useSpecialties } from '@/hooks/use-public-data';
+import { useSpecialties } from '@/hooks/use-public-data';
 import { resolveImagePreviewUrl } from '@/lib/api-url';
+import { getToggleStatusActionClass, statusToneClasses } from '@/lib/status-style-classes';
+import {
+  getDoctorAccountStatusState,
+  getDoctorReadinessState,
+  type DoctorReadinessTone,
+} from '@/lib/doctor-readiness';
 import type { Doctor } from '@/types/api';
 import type { LucideIcon } from 'lucide-react';
 
@@ -107,11 +114,6 @@ const inactiveReasonLabel = (reason?: string | null) => {
   }
 };
 
-const accountBadgeClass = (hasAccount?: boolean) =>
-  hasAccount
-    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-    : 'border-slate-200 bg-slate-100 text-slate-700';
-
 const getInitials = (name?: string) => {
   if (!name) return 'BS';
   return (
@@ -123,6 +125,27 @@ const getInitials = (name?: string) => {
       .join('') || 'BS'
   );
 };
+
+const getToneClass = (tone: DoctorReadinessTone) => statusToneClasses[tone];
+
+function formatSummaryValue(value: number | undefined, isLoading: boolean, isError: boolean) {
+  if (isLoading) return '...';
+  if (isError) return '-';
+  return typeof value === 'number' ? value.toLocaleString('vi-VN') : '-';
+}
+
+function getSummaryHint(
+  value: number | undefined,
+  isLoading: boolean,
+  isError: boolean,
+  hasBackendSummary: boolean,
+) {
+  if (isLoading) return 'Đang tải tổng hợp từ backend';
+  if (isError) return 'Không tải được tổng hợp từ backend';
+  if (!hasBackendSummary) return 'Chưa có dữ liệu tổng hợp từ backend';
+  if (typeof value !== 'number') return 'Backend chưa trả số liệu này';
+  return 'Theo bộ lọc hiện tại';
+}
 
 function SummaryCard({
   label,
@@ -138,7 +161,7 @@ function SummaryCard({
   toneClass: string;
 }) {
   return (
-    <Card className="overflow-hidden rounded-2xl border border-border/60 bg-white shadow-sm">
+    <Card className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm">
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-2">
@@ -191,9 +214,17 @@ export default function DoctorsAdminPage() {
     size: '20',
     ...filterParams,
   });
-  const { data: doctorSummary } = useAdminDoctorsSummary(filterParams);
+  const {
+    data: doctorSummary,
+    isLoading: doctorSummaryLoading,
+    isError: doctorSummaryLoadError,
+    isRefetchError: doctorSummaryRefetchError,
+    isPlaceholderData: doctorSummaryPlaceholder,
+  } = useAdminDoctorsSummary(filterParams);
 
-  const { data: branches = [] } = useBranches();
+  const adminBranchParams = useMemo(() => ({ page: '0', size: '1000' }), []);
+  const { data: branchesPage } = useAdminBranches(adminBranchParams);
+  const branches = branchesPage?.items ?? [];
   const { data: specialties = [] } = useSpecialties();
 
   const saveDoctor = useSaveDoctor();
@@ -223,21 +254,13 @@ export default function DoctorsAdminPage() {
     [data?.items, branchMap, specialtyMap],
   );
 
-  const loadedPageSummary = useMemo(() => {
-    const activeDoctors = rows.filter((doctor) => doctor.status === 'ACTIVE').length;
-    const noAccountDoctors = rows.filter((doctor) => !doctor.hasAccount).length;
-    const blockedDoctors = rows.filter(
-      (doctor) => Boolean(doctor.inactiveReason && doctor.inactiveReason !== 'SELF_INACTIVE'),
-    ).length;
-
-    return {
-      total: data?.meta.totalItems ?? rows.length,
-      activeDoctors,
-      noAccountDoctors,
-      blockedDoctors,
-    };
-  }, [data?.meta.totalItems, rows]);
-  const summary = doctorSummary ?? loadedPageSummary;
+  const doctorSummaryPending = doctorSummaryLoading || doctorSummaryPlaceholder;
+  const doctorSummaryError = doctorSummaryLoadError || doctorSummaryRefetchError;
+  const hasDoctorSummary = Boolean(doctorSummary) && !doctorSummaryPending && !doctorSummaryError;
+  const doctorSummaryHint = (value: number | undefined) =>
+    getSummaryHint(value, doctorSummaryPending, doctorSummaryError, hasDoctorSummary);
+  const inactiveAccountDoctors =
+    doctorSummary?.inactiveAccountDoctors ?? doctorSummary?.blockedAccountDoctors;
 
   const openCreate = () => {
     setEditing(null);
@@ -249,19 +272,19 @@ export default function DoctorsAdminPage() {
     setEditing(row);
     setForm({
       fullName: row.fullName ?? '',
-      displayTitleVn: row.title ?? '',
-      displayTitleEn: row.title ?? '',
-      bioVn: row.bio ?? '',
-      bioEn: row.bio ?? '',
-      expertiseVn: row.expertise ?? '',
-      expertiseEn: row.expertise ?? '',
+      displayTitleVn: row.displayTitleVn ?? '',
+      displayTitleEn: row.displayTitleEn ?? '',
+      bioVn: row.bioVn ?? '',
+      bioEn: row.bioEn ?? '',
+      expertiseVn: row.expertiseVn ?? '',
+      expertiseEn: row.expertiseEn ?? '',
       yearsExp: Number(row.yearsOfExperience ?? 0),
       specialtyIds: row.specialtyIds?.length ? row.specialtyIds : row.specialtyId ? [row.specialtyId] : [],
       branchId: row.branchId ?? '',
-      educationVn: row.education ?? '',
-      educationEn: row.education ?? '',
-      achievementsVn: row.achievements ?? '',
-      achievementsEn: row.achievements ?? '',
+      educationVn: row.educationVn ?? '',
+      educationEn: row.educationEn ?? '',
+      achievementsVn: row.achievementsVn ?? '',
+      achievementsEn: row.achievementsEn ?? '',
       avatarUrl: row.avatarUrl ?? '',
     });
     setOpen(true);
@@ -338,6 +361,8 @@ export default function DoctorsAdminPage() {
       className: 'min-w-[320px]',
       cell: (row) => {
         const avatarSrc = resolveImagePreviewUrl(row.avatarUrl, 'image/*');
+        const accountState = getDoctorAccountStatusState(row);
+        const readinessState = getDoctorReadinessState(row);
 
         return (
           <div className="flex items-start gap-3">
@@ -369,6 +394,16 @@ export default function DoctorsAdminPage() {
                   <BriefcaseMedical className="h-3.5 w-3.5" />
                   {row.yearsOfExperience || 0} năm KN
                 </Badge>
+                {row.hasAccount === false ? (
+                  <Badge className={`rounded-full px-2.5 py-1 text-xs ${getToneClass(accountState.tone)}`}>
+                    Chưa cấp tài khoản
+                  </Badge>
+                ) : null}
+                {readinessState.ready === false ? (
+                  <Badge className={`rounded-full px-2.5 py-1 text-xs ${getToneClass(readinessState.tone)}`}>
+                    Chưa sẵn sàng vận hành
+                  </Badge>
+                ) : null}
               </div>
             </div>
           </div>
@@ -379,35 +414,48 @@ export default function DoctorsAdminPage() {
       key: 'overview',
       header: 'Tổng quan trạng thái',
       className: 'min-w-[300px]',
-      cell: (row) => (
-        <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge status={row.status || 'ACTIVE'} />
-            <span
-              className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${accountBadgeClass(
-                row.hasAccount,
-              )}`}
-            >
-              {row.hasAccount ? 'Đã cấp tài khoản' : 'Chưa cấp tài khoản'}
-            </span>
-          </div>
+      cell: (row) => {
+        const accountState = getDoctorAccountStatusState(row);
+        const readinessState = getDoctorReadinessState(row);
 
-          <div className="space-y-1 text-sm">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <UserRound className="h-4 w-4" />
-              <span className="font-medium text-foreground">Vận hành:</span>
-              <span>{inactiveReasonLabel(row.inactiveReason || row.effectiveStatus)}</span>
+        return (
+          <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Trạng thái hồ sơ</span>
+              <StatusBadge status={row.status || 'ACTIVE'} />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Tài khoản</span>
+              <span
+                className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${getToneClass(
+                  accountState.tone,
+                )}`}
+              >
+                {accountState.label}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Sẵn sàng vận hành</span>
+              <span
+                className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${getToneClass(
+                  readinessState.tone,
+                )}`}
+              >
+                {readinessState.label}
+              </span>
             </div>
 
             {row.inactiveReason && row.inactiveReason !== 'SELF_INACTIVE' && (
-              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              <div className="flex items-start gap-2 rounded-xl border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>{inactiveReasonLabel(row.inactiveReason)}</span>
               </div>
             )}
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       key: 'actions',
@@ -427,22 +475,27 @@ export default function DoctorsAdminPage() {
                 Sửa hồ sơ
               </DropdownMenuItem>
 
-              {!row.hasAccount ? (
+              {row.hasAccount === false ? (
                 <DropdownMenuItem onClick={() => openProvision(row)}>
                   <KeyRound className="mr-2 h-4 w-4" />
                   Tạo tài khoản
                 </DropdownMenuItem>
-              ) : (
+              ) : row.hasAccount === true ? (
                 <DropdownMenuItem onClick={() => setResetTarget(row)}>
                   <RefreshCcw className="mr-2 h-4 w-4" />
                   Reset mật khẩu mặc định
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem disabled>
+                  <KeyRound className="mr-2 h-4 w-4" />
+                  Chưa rõ tài khoản
                 </DropdownMenuItem>
               )}
 
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => setStatusTarget(row)}
-                className={row.status === 'ACTIVE' ? 'text-amber-700' : 'text-emerald-700'}
+                className={getToggleStatusActionClass(row.status === 'ACTIVE')}
               >
                 {row.status === 'ACTIVE' ? (
                   <PauseCircle className="mr-2 h-4 w-4" />
@@ -474,32 +527,65 @@ export default function DoctorsAdminPage() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
           label="Tổng bác sĩ"
-          value={summary.total.toString()}
-          hint="Theo bộ lọc hiện tại"
+          value={formatSummaryValue(doctorSummary?.total, doctorSummaryPending, doctorSummaryError)}
+          hint={doctorSummaryHint(doctorSummary?.total)}
           icon={UserRound}
-          toneClass="border-slate-200 bg-slate-50 text-slate-600"
+          toneClass={statusToneClasses.neutral}
         />
         <SummaryCard
           label="Đang hoạt động"
-          value={summary.activeDoctors.toString()}
-          hint="Theo bộ lọc hiện tại"
+          value={formatSummaryValue(doctorSummary?.activeDoctors, doctorSummaryPending, doctorSummaryError)}
+          hint={doctorSummaryHint(doctorSummary?.activeDoctors)}
           icon={Stethoscope}
-          toneClass="border-emerald-200 bg-emerald-50 text-emerald-700"
+          toneClass={statusToneClasses.success}
         />
         <SummaryCard
-          label="Chưa có tài khoản"
-          value={summary.noAccountDoctors.toString()}
-          hint="Theo bộ lọc hiện tại"
+          label="Ngừng hoạt động"
+          value={formatSummaryValue(doctorSummary?.inactiveDoctors, doctorSummaryPending, doctorSummaryError)}
+          hint={doctorSummaryHint(doctorSummary?.inactiveDoctors)}
+          icon={PauseCircle}
+          toneClass={statusToneClasses.neutral}
+        />
+        <SummaryCard
+          label="Chưa cấp tài khoản"
+          value={formatSummaryValue(doctorSummary?.noAccountDoctors, doctorSummaryPending, doctorSummaryError)}
+          hint={doctorSummaryHint(doctorSummary?.noAccountDoctors)}
           icon={KeyRound}
-          toneClass="border-amber-200 bg-amber-50 text-amber-700"
+          toneClass={statusToneClasses.warning}
         />
         <SummaryCard
-          label="Đang bị chặn vận hành"
-          value={summary.blockedDoctors.toString()}
-          hint="Theo bộ lọc hiện tại"
+          label="Tài khoản không hoạt động"
+          value={formatSummaryValue(inactiveAccountDoctors, doctorSummaryPending, doctorSummaryError)}
+          hint={doctorSummaryHint(inactiveAccountDoctors)}
           icon={AlertTriangle}
-          toneClass="border-rose-200 bg-rose-50 text-rose-700"
+          toneClass={statusToneClasses.destructive}
         />
+        {typeof doctorSummary?.operationalReadyDoctors !== 'undefined' || doctorSummaryPending ? (
+          <SummaryCard
+            label="Sẵn sàng vận hành"
+            value={formatSummaryValue(
+              doctorSummary?.operationalReadyDoctors,
+              doctorSummaryPending,
+              doctorSummaryError,
+            )}
+            hint={doctorSummaryHint(doctorSummary?.operationalReadyDoctors)}
+            icon={BriefcaseMedical}
+            toneClass={statusToneClasses.success}
+          />
+        ) : null}
+        {typeof doctorSummary?.notOperationalReadyDoctors !== 'undefined' || doctorSummaryPending ? (
+          <SummaryCard
+            label="Chưa sẵn sàng vận hành"
+            value={formatSummaryValue(
+              doctorSummary?.notOperationalReadyDoctors,
+              doctorSummaryPending,
+              doctorSummaryError,
+            )}
+            hint={doctorSummaryHint(doctorSummary?.notOperationalReadyDoctors)}
+            icon={AlertTriangle}
+            toneClass={statusToneClasses.warning}
+          />
+        ) : null}
       </div>
 
       <DataTable

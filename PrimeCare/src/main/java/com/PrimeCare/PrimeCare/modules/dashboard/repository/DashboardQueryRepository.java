@@ -4,6 +4,7 @@ import com.PrimeCare.PrimeCare.modules.dashboard.dto.query.DashboardAggregateRow
 import com.PrimeCare.PrimeCare.modules.dashboard.dto.query.DashboardBranchRevenueRow;
 import com.PrimeCare.PrimeCare.modules.dashboard.dto.query.DashboardDoctorKpiRow;
 import com.PrimeCare.PrimeCare.modules.dashboard.dto.query.DashboardSpecialtyKpiRow;
+import com.PrimeCare.PrimeCare.modules.billing.repository.InvoiceRevenueSql;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Repository;
@@ -146,6 +147,32 @@ public class DashboardQueryRepository {
         return toLong(result);
     }
 
+    public long countUniquePatientsBetween(LocalDate fromDate, LocalDate toDate, LocalDateTime from, LocalDateTime to) {
+        String sql = """
+                select count(distinct patient_id)
+                from (
+                    select a.patient_id as patient_id
+                    from appointments a
+                    where a.patient_id is not null
+                      and a.visit_date between ?1 and ?2
+                    union
+                    select e.patient_id as patient_id
+                    from encounters e
+                    where e.patient_id is not null
+                      and e.started_at between ?3 and ?4
+                ) dashboard_patients
+                """;
+
+        Object result = em.createNativeQuery(sql)
+                          .setParameter(1, Date.valueOf(fromDate))
+                          .setParameter(2, Date.valueOf(toDate))
+                          .setParameter(3, Timestamp.valueOf(from))
+                          .setParameter(4, Timestamp.valueOf(to))
+                          .getSingleResult();
+
+        return toLong(result);
+    }
+
     public long countServiceOrderItemsByStatusBetween(String status, LocalDateTime from, LocalDateTime to) {
         String sql = """
                 select count(i.id)
@@ -165,10 +192,67 @@ public class DashboardQueryRepository {
 
     public long sumPaidRevenueBetween(LocalDateTime from, LocalDateTime to) {
         String sql = """
-                select coalesce(sum(i.total_amount), 0)
+                select coalesce(sum(
+                """ + InvoiceRevenueSql.NET_PAID_REVENUE_CASE + """
+                ), 0)
                 from invoices i
-                where i.payment_status = 'PAID'
+                """ + InvoiceRevenueSql.INVOICE_ITEM_REFUNDS_JOIN + """
+                where i.deleted = false
                   and i.paid_at between ?1 and ?2
+                """;
+
+        Object result = em.createNativeQuery(sql)
+                          .setParameter(1, Timestamp.valueOf(from))
+                          .setParameter(2, Timestamp.valueOf(to))
+                          .getSingleResult();
+
+        return toLong(result);
+    }
+
+    public long sumGrossPaidRevenueBetween(LocalDateTime from, LocalDateTime to) {
+        String sql = """
+                select coalesce(sum(
+                """ + InvoiceRevenueSql.GROSS_PAID_REVENUE_CASE + """
+                ), 0)
+                from invoices i
+                """ + InvoiceRevenueSql.INVOICE_ITEM_REFUNDS_JOIN + """
+                where i.deleted = false
+                  and i.paid_at between ?1 and ?2
+                """;
+
+        Object result = em.createNativeQuery(sql)
+                          .setParameter(1, Timestamp.valueOf(from))
+                          .setParameter(2, Timestamp.valueOf(to))
+                          .getSingleResult();
+
+        return toLong(result);
+    }
+
+    public long sumRefundedAmountForPaidInvoicesBetween(LocalDateTime from, LocalDateTime to) {
+        String sql = """
+                select coalesce(sum(
+                """ + InvoiceRevenueSql.REFUNDED_AMOUNT_FOR_PAID_INVOICE_CASE + """
+                ), 0)
+                from invoices i
+                """ + InvoiceRevenueSql.INVOICE_ITEM_REFUNDS_JOIN + """
+                where i.deleted = false
+                  and i.paid_at between ?1 and ?2
+                """;
+
+        Object result = em.createNativeQuery(sql)
+                          .setParameter(1, Timestamp.valueOf(from))
+                          .setParameter(2, Timestamp.valueOf(to))
+                          .getSingleResult();
+
+        return toLong(result);
+    }
+
+    public long sumRefundsProcessedBetween(LocalDateTime from, LocalDateTime to) {
+        String sql = """
+                select coalesce(sum(coalesce(rr.refund_amount, 0)), 0)
+                from refund_records rr
+                where rr.deleted = false
+                  and rr.refunded_at between ?1 and ?2
                 """;
 
         Object result = em.createNativeQuery(sql)
@@ -333,19 +417,7 @@ public class DashboardQueryRepository {
     }
 
     public List<DashboardBranchRevenueRow> revenueByBranch(LocalDateTime from, LocalDateTime to) {
-        String sql = """
-                select
-                    b.id as branch_id,
-                    b.name_vn as branch_name,
-                    coalesce(sum(i.total_amount), 0) as paid_revenue
-                from invoices i
-                join service_orders so on so.id = i.service_order_id
-                join branches b on b.id = so.branch_id
-                where i.payment_status = 'PAID'
-                  and i.paid_at between ?1 and ?2
-                group by b.id, b.name_vn
-                order by coalesce(sum(i.total_amount), 0) desc
-                """;
+        String sql = revenueByBranchSql();
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = em.createNativeQuery(sql)
@@ -362,12 +434,33 @@ public class DashboardQueryRepository {
                    .toList();
     }
 
+    static String revenueByBranchSql() {
+        return """
+                select
+                    b.id as branch_id,
+                    b.name_vn as branch_name,
+                    coalesce(sum(
+                    """ + InvoiceRevenueSql.NET_PAID_REVENUE_CASE + """
+                    ), 0) as paid_revenue
+                from invoices i
+                """ + InvoiceRevenueSql.INVOICE_ITEM_REFUNDS_JOIN + """
+                left join service_orders so on so.id = i.service_order_id
+                left join prescriptions p on p.id = i.prescription_id
+                left join encounters e on e.id = p.encounter_id
+                join branches b on b.id = coalesce(so.branch_id, e.branch_id)
+                where i.deleted = false
+                  and i.paid_at between ?1 and ?2
+                group by b.id, b.name_vn
+                order by paid_revenue desc
+                """;
+    }
+
     private DashboardAggregateRow toAggregateRow(Object[] r) {
         return new DashboardAggregateRow(
                 toLongObject(r[0]),
                 toStringSafe(r[1]),
                 toStringSafe(r[2]),
-                (Long) toNumber(r[3])
+                toLongObject(r[3])
         );
     }
 

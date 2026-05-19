@@ -6,6 +6,7 @@ import com.PrimeCare.PrimeCare.modules.auth.entity.CredentialSetupToken;
 import com.PrimeCare.PrimeCare.modules.auth.entity.User;
 import com.PrimeCare.PrimeCare.modules.auth.repository.CredentialSetupTokenRepository;
 import com.PrimeCare.PrimeCare.modules.auth.repository.UserRepository;
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.shared.enums.CredentialSetupTokenPurpose;
 import com.PrimeCare.PrimeCare.shared.enums.DoctorStatus;
 import com.PrimeCare.PrimeCare.shared.enums.UserStatus;
@@ -22,6 +23,8 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -32,6 +35,7 @@ public class CredentialSetupService {
     private final PasswordEncoder passwordEncoder;
     private final AuthService authService;
     private final AccountCredentialNotificationService notificationService;
+    private final AuditLogService auditLogService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     @Value("${app.auth.credential-token-minutes:30}")
@@ -61,6 +65,10 @@ public class CredentialSetupService {
         );
         token.setDeliveryChannel(result.getDeliveryChannel());
         tokenRepository.save(token);
+
+        if (purpose == CredentialSetupTokenPurpose.PASSWORD_RESET) {
+            auditLogService.log(null, "RESET_PASSWORD_REQUESTED", "AUTH", user.getId(), null, snapshotCredentialEvent(user, token));
+        }
 
         return CredentialSetupDeliveryResponse.builder()
                 .deliveryChannel(result.getDeliveryChannel())
@@ -98,6 +106,7 @@ public class CredentialSetupService {
         }
 
         User user = token.getUser();
+        Map<String, Object> before = snapshotUserAccount(user);
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         if (user.getStatus() == UserStatus.PENDING_ACTIVATION) {
             user.setStatus(resolveActivatedStatus(user));
@@ -108,6 +117,16 @@ public class CredentialSetupService {
         tokenRepository.save(token);
         revokeOutstanding(user.getId(), token.getPurpose());
         authService.logoutAllSessions(user.getId());
+        auditLogService.log(
+                user,
+                token.getPurpose() == CredentialSetupTokenPurpose.ACCOUNT_SETUP
+                        ? "CREDENTIAL_SETUP_COMPLETED"
+                        : "RESET_PASSWORD_COMPLETED",
+                "AUTH",
+                user.getId(),
+                before,
+                snapshotCredentialEvent(user, token)
+        );
     }
 
     @Transactional
@@ -181,5 +200,32 @@ public class CredentialSetupService {
     private String maskPhone(String phone) {
         if (phone == null || phone.length() < 4) return phone;
         return "***" + phone.substring(phone.length() - 4);
+    }
+
+    private Map<String, Object> snapshotCredentialEvent(User user, CredentialSetupToken token) {
+        Map<String, Object> data = snapshotUserAccount(user);
+        data.put("credentialTokenId", token.getId());
+        data.put("purpose", token.getPurpose() != null ? token.getPurpose().name() : null);
+        data.put("deliveryChannel", token.getDeliveryChannel());
+        data.put("deliveryTarget", token.getDeliveryTarget());
+        data.put("requestedByUserId", token.getRequestedByUserId());
+        data.put("expiresAt", token.getExpiresAt());
+        data.put("usedAt", token.getUsedAt());
+        data.put("revoked", token.isRevoked());
+        return data;
+    }
+
+    private Map<String, Object> snapshotUserAccount(User user) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("userId", user.getId());
+        data.put("email", user.getEmail());
+        data.put("phone", user.getPhone());
+        data.put("role", user.getRole() != null ? user.getRole().name() : null);
+        data.put("status", user.getStatus() != null ? user.getStatus().name() : null);
+        data.put("doctorProfileId", user.getDoctorProfile() != null ? user.getDoctorProfile().getId() : null);
+        data.put("staffProfileId", user.getStaffProfile() != null ? user.getStaffProfile().getId() : null);
+        data.put("patientId", user.getPatient() != null ? user.getPatient().getId() : null);
+        data.put("passwordConfigured", user.getPasswordHash() != null && !user.getPasswordHash().isBlank());
+        return data;
     }
 }

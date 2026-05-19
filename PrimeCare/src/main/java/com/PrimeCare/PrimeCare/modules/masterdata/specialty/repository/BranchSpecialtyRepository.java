@@ -41,6 +41,19 @@ public interface BranchSpecialtyRepository extends JpaRepository<BranchSpecialty
     List<BranchSpecialty> findActiveByBranchId(Long branchId);
 
     @Query("""
+            select bs
+            from BranchSpecialty bs
+            join fetch bs.branch b
+            join fetch bs.specialty s
+            where s.id = :specialtyId
+              and b.status = com.PrimeCare.PrimeCare.shared.enums.BranchStatus.ACTIVE
+              and bs.status = com.PrimeCare.PrimeCare.shared.enums.BranchSpecialtyStatus.ACTIVE
+              and s.status = 'ACTIVE'
+            order by bs.displayOrder asc, b.nameVn asc
+            """)
+    List<BranchSpecialty> findActiveBySpecialtyId(@Param("specialtyId") Long specialtyId);
+
+    @Query("""
         select bs
         from BranchSpecialty bs
         where (:branchId is null or bs.branch.id = :branchId)

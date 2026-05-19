@@ -4,6 +4,11 @@ import { UserAvatar } from './UserAvatar';
 import { Button } from '@/components/ui/button';
 import type { Doctor } from '@/types/api';
 import { useTranslation } from 'react-i18next';
+import {
+  getDoctorPublicBookingLabel,
+  getPublicDoctorBookingSpecialty,
+  isPublicDoctorBookable,
+} from '@/lib/doctor-readiness';
 
 interface DoctorCardProps {
   doctor: Doctor;
@@ -29,6 +34,15 @@ export function DoctorCard({ doctor }: DoctorCardProps) {
   const nextAvailableLabel = formatNextAvailableDate(doctor.nextAvailableDate, locale);
   const languages = doctor.supportedLanguages ?? [];
   const featuredServices = doctor.featuredServices ?? [];
+  const canBook = isPublicDoctorBookable(doctor);
+  const bookingSpecialty = getPublicDoctorBookingSpecialty(doctor);
+  const canOpenBookingShortcut = canBook && Boolean(doctor.branchId && bookingSpecialty?.id);
+  const bookingStatusLabel =
+    canBook && !bookingSpecialty
+      ? isEn
+        ? 'Booking specialty unavailable'
+        : 'Chưa có chuyên khoa đặt lịch'
+      : getDoctorPublicBookingLabel(doctor, isEn);
   const yearsOfExperience =
     typeof doctor.yearsOfExperience === 'number' && doctor.yearsOfExperience > 0
       ? `${doctor.yearsOfExperience} ${isEn ? 'years' : 'năm KN'}`
@@ -38,8 +52,7 @@ export function DoctorCard({ doctor }: DoctorCardProps) {
 
   const bookingParams = new URLSearchParams({ doctorId: doctor.id });
   if (doctor.branchId) bookingParams.set('branchId', doctor.branchId);
-  const primarySpecialtyId = doctor.specialtyId || doctor.specialtyIds?.[0];
-  if (primarySpecialtyId) bookingParams.set('specialtyId', primarySpecialtyId);
+  if (bookingSpecialty?.id) bookingParams.set('specialtyId', bookingSpecialty.id);
 
   return (
     <div className="group flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card shadow-card transition-all hover:shadow-elevated">
@@ -51,7 +64,7 @@ export function DoctorCard({ doctor }: DoctorCardProps) {
         <div className="min-w-0 flex-1">
           <h3 className="truncate font-semibold text-foreground">{doctor.fullName}</h3>
           <p className="mt-1 truncate text-sm text-primary">
-            {doctor.specialtyName || doctor.title || (isEn ? 'Specialty updating' : 'Đang cập nhật chuyên khoa')}
+            {bookingSpecialty?.name || doctor.specialtyName || doctor.title || (isEn ? 'Specialty updating' : 'Đang cập nhật chuyên khoa')}
           </p>
           <p className="mt-1 truncate text-xs text-muted-foreground">
             {doctor.branchName || (isEn ? 'Branch updating' : 'Đang cập nhật cơ sở')}
@@ -97,19 +110,21 @@ export function DoctorCard({ doctor }: DoctorCardProps) {
         <div className="min-w-0 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <Stethoscope className="h-3.5 w-3.5 text-primary" />
-            {doctor.bookable === false ? (isEn ? 'Booking unavailable' : 'Chưa đặt trực tuyến') : (isEn ? 'Profile available' : 'Có hồ sơ chi tiết')}
+            {bookingStatusLabel}
           </span>
         </div>
         <div className="flex shrink-0 gap-2">
           <Button asChild variant="ghost" size="sm" className="rounded-lg px-3">
             <Link to={`/doctors/${doctor.id}`}>{isEn ? 'Details' : 'Xem chi tiết'}</Link>
           </Button>
-          <Button asChild size="sm" className="rounded-lg px-3">
-            <Link to={`/booking?${bookingParams.toString()}`}>
-              <CalendarDays className="mr-1.5 h-4 w-4" />
-              {isEn ? 'Book' : 'Đặt lịch'}
-            </Link>
-          </Button>
+          {canOpenBookingShortcut ? (
+            <Button asChild size="sm" className="rounded-lg px-3">
+              <Link to={`/booking?${bookingParams.toString()}`}>
+                <CalendarDays className="mr-1.5 h-4 w-4" />
+                {isEn ? 'Book' : 'Đặt lịch'}
+              </Link>
+            </Button>
+          ) : null}
         </div>
       </div>
     </div>

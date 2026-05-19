@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { statusDotClasses, statusTextClasses, statusToneClasses } from '@/lib/status-style-classes';
 import { useDoctorSchedules } from '@/hooks/use-doctor-data';
 import type { DoctorSchedule } from '@/types/api';
 
@@ -30,14 +31,14 @@ const SESSION_CONFIG: Record<SessionKey, { labelVi: string; labelEn: string; bad
   MORNING: {
     labelVi: 'Sáng',
     labelEn: 'Morning',
-    badgeClass: 'border-sky-200 bg-sky-50 text-sky-700',
-    dotClass: 'bg-sky-500',
+    badgeClass: statusToneClasses.info,
+    dotClass: statusDotClasses.info,
   },
   AFTERNOON: {
     labelVi: 'Chiều',
     labelEn: 'Afternoon',
-    badgeClass: 'border-amber-200 bg-amber-50 text-amber-700',
-    dotClass: 'bg-amber-500',
+    badgeClass: statusToneClasses.warning,
+    dotClass: statusDotClasses.warning,
   },
 };
 
@@ -148,8 +149,8 @@ export default function DoctorSchedulesViewPage() {
 
           <div className="grid gap-4 md:grid-cols-3">
             <StatCard icon={CalendarDays} label={isEn ? 'Working days' : 'Ngày đi làm'} value={stats.workingDays} tone="text-primary" />
-            <StatCard icon={Clock3} label={isEn ? 'Morning sessions' : 'Ca sáng'} value={stats.morningCount} tone="text-sky-600" />
-            <StatCard icon={Clock3} label={isEn ? 'Afternoon sessions' : 'Ca chiều'} value={stats.afternoonCount} tone="text-amber-600" />
+            <StatCard icon={Clock3} label={isEn ? 'Morning sessions' : 'Ca sáng'} value={stats.morningCount} tone={statusTextClasses.info} />
+            <StatCard icon={Clock3} label={isEn ? 'Afternoon sessions' : 'Ca chiều'} value={stats.afternoonCount} tone={statusTextClasses.warning} />
           </div>
 
           <Card className="border-border/70 shadow-sm">

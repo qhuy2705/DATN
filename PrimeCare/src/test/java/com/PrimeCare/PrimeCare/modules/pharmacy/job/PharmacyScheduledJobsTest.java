@@ -69,7 +69,7 @@ class PharmacyScheduledJobsTest {
                 eq(InternalNotificationService.SEVERITY_CRITICAL),
                 eq("Job kiểm tra tồn kho thất bại"),
                 eq("Job kiểm tra lô thuốc sắp hết hạn/tồn kho thấp thất bại."),
-                eq("/app/admin/notifications"),
+                eq("/app/admin/dashboard"),
                 eq("PHARMACY_JOB"),
                 eq(0L),
                 any(Map.class)

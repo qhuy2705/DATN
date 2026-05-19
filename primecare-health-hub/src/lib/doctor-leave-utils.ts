@@ -1,4 +1,5 @@
 import type { LeaveRequest } from '@/types/api';
+import { statusDotClasses, statusToneClasses } from '@/lib/status-style-classes';
 
 export type SessionKey = 'MORNING' | 'AFTERNOON';
 
@@ -29,32 +30,32 @@ export const LEAVE_STATUS_STYLES: Record<
   }
 > = {
   PENDING: {
-    badgeClass: 'border-violet-200 bg-violet-50 text-violet-700',
-    dotClass: 'bg-violet-500',
+    badgeClass: statusToneClasses.warning,
+    dotClass: statusDotClasses.warning,
     labelVi: 'Chờ duyệt',
     labelEn: 'Pending',
     shortVi: 'Chờ duyệt',
     shortEn: 'Pending',
   },
   APPROVED: {
-    badgeClass: 'border-rose-200 bg-rose-50 text-rose-700',
-    dotClass: 'bg-rose-500',
+    badgeClass: statusToneClasses.success,
+    dotClass: statusDotClasses.success,
     labelVi: 'Đã duyệt',
     labelEn: 'Approved',
     shortVi: 'Đã duyệt',
     shortEn: 'Approved',
   },
   REJECTED: {
-    badgeClass: 'border-slate-200 bg-slate-100 text-slate-700',
-    dotClass: 'bg-slate-500',
+    badgeClass: statusToneClasses.destructive,
+    dotClass: statusDotClasses.destructive,
     labelVi: 'Từ chối',
     labelEn: 'Rejected',
     shortVi: 'Từ chối',
     shortEn: 'Rejected',
   },
   CANCELLED: {
-    badgeClass: 'border-zinc-200 bg-zinc-100 text-zinc-600',
-    dotClass: 'bg-zinc-500',
+    badgeClass: statusToneClasses.neutral,
+    dotClass: statusDotClasses.neutral,
     labelVi: 'Đã hủy',
     labelEn: 'Cancelled',
     shortVi: 'Đã hủy',

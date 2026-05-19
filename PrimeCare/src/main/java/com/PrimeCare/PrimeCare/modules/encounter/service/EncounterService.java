@@ -5,6 +5,7 @@ import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentReposit
 import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.auth.entity.User;
 import com.PrimeCare.PrimeCare.modules.auth.repository.UserRepository;
+import com.PrimeCare.PrimeCare.modules.booking_restriction.service.PatientViolationEventService;
 import com.PrimeCare.PrimeCare.modules.encounter.dto.request.UpdateEncounterRequest;
 import com.PrimeCare.PrimeCare.modules.encounter.dto.record.EncounterWorkflowState;
 import com.PrimeCare.PrimeCare.modules.encounter.dto.response.EncounterDiagnosisResponse;
@@ -64,6 +65,7 @@ public class EncounterService {
     private final RealtimeEventPublisher realtimeEventPublisher;
     private final AfterCommitExecutor afterCommitExecutor;
     private final AuditLogService auditLogService;
+    private final PatientViolationEventService patientViolationEventService;
 
     @Value("${app.encounter.max-reopen-count:3}")
     private int maxReopenCount;
@@ -408,6 +410,9 @@ public class EncounterService {
         }
 
         Encounter saved = encounterRepository.save(e);
+        if (saved.getAppointment() != null) {
+            patientViolationEventService.recordSuccessfulVisitCredit(saved.getAppointment(), doctorUser);
+        }
         EncounterWorkflowState completedState = encounterWorkflowService.getWorkflowState(saved);
         afterCommitExecutor.execute(() -> {
             publishEncounterRealtime(saved, "ENCOUNTER_COMPLETED");
@@ -568,39 +573,89 @@ public class EncounterService {
     }
 
     private void applyClinicalData(Encounter e, UpdateEncounterRequest req) {
-        e.setIntakeReasonForVisit(normalize(req.getIntakeReasonForVisit()));
-        e.setVisitType(normalizeCode(req.getVisitType()));
-        e.setTriagePriority(normalizeCode(req.getTriagePriority()));
-        e.setTriageNote(normalize(req.getTriageNote()));
-        e.setInsuranceNote(normalize(req.getInsuranceNote()));
-        e.setEmergencyContactName(normalize(req.getEmergencyContactName()));
-        e.setEmergencyContactPhone(normalize(req.getEmergencyContactPhone()));
-        e.setChiefComplaint(normalize(req.getChiefComplaint()));
-        e.setClinicalNote(normalize(req.getClinicalNote()));
+        if (req.getIntakeReasonForVisit() != null) {
+            e.setIntakeReasonForVisit(normalize(req.getIntakeReasonForVisit()));
+        }
+        if (req.getVisitType() != null) {
+            e.setVisitType(normalizeCode(req.getVisitType()));
+        }
+        if (req.getTriagePriority() != null) {
+            e.setTriagePriority(normalizeCode(req.getTriagePriority()));
+        }
+        if (req.getTriageNote() != null) {
+            e.setTriageNote(normalize(req.getTriageNote()));
+        }
+        if (req.getInsuranceNote() != null) {
+            e.setInsuranceNote(normalize(req.getInsuranceNote()));
+        }
+        if (req.getEmergencyContactName() != null) {
+            e.setEmergencyContactName(normalize(req.getEmergencyContactName()));
+        }
+        if (req.getEmergencyContactPhone() != null) {
+            e.setEmergencyContactPhone(normalize(req.getEmergencyContactPhone()));
+        }
+        if (req.getChiefComplaint() != null) {
+            e.setChiefComplaint(normalize(req.getChiefComplaint()));
+        }
+        if (req.getClinicalNote() != null) {
+            e.setClinicalNote(normalize(req.getClinicalNote()));
+        }
         if (req.getPreliminaryDiagnosis() != null) {
             e.setPreliminaryDiagnosis(normalize(req.getPreliminaryDiagnosis()));
         }
         if (req.getFinalDiagnosis() != null) {
             e.setFinalDiagnosis(normalize(req.getFinalDiagnosis()));
         }
-        e.setConclusion(normalize(req.getConclusion()));
+        if (req.getConclusion() != null) {
+            e.setConclusion(normalize(req.getConclusion()));
+        }
 
-        e.setHeightCm(req.getHeightCm());
-        e.setWeightKg(req.getWeightKg());
-        e.setTemperatureC(req.getTemperatureC());
-        e.setPulse(req.getPulse());
-        e.setSystolicBp(req.getSystolicBp());
-        e.setDiastolicBp(req.getDiastolicBp());
-        e.setRespiratoryRate(req.getRespiratoryRate());
-        e.setSpo2(req.getSpo2());
+        if (req.getHeightCm() != null) {
+            e.setHeightCm(req.getHeightCm());
+        }
+        if (req.getWeightKg() != null) {
+            e.setWeightKg(req.getWeightKg());
+        }
+        if (req.getTemperatureC() != null) {
+            e.setTemperatureC(req.getTemperatureC());
+        }
+        if (req.getPulse() != null) {
+            e.setPulse(req.getPulse());
+        }
+        if (req.getSystolicBp() != null) {
+            e.setSystolicBp(req.getSystolicBp());
+        }
+        if (req.getDiastolicBp() != null) {
+            e.setDiastolicBp(req.getDiastolicBp());
+        }
+        if (req.getRespiratoryRate() != null) {
+            e.setRespiratoryRate(req.getRespiratoryRate());
+        }
+        if (req.getSpo2() != null) {
+            e.setSpo2(req.getSpo2());
+        }
 
-        e.setAllergySnapshot(normalize(req.getAllergySnapshot()));
-        e.setChronicDiseaseSnapshot(normalize(req.getChronicDiseaseSnapshot()));
-        e.setPastMedicalHistory(normalize(req.getPastMedicalHistory()));
-        e.setPhysicalExamination(normalize(req.getPhysicalExamination()));
-        e.setTreatmentPlan(normalize(req.getTreatmentPlan()));
-        e.setFollowUpDate(req.getFollowUpDate());
-        e.setFollowUpNote(normalize(req.getFollowUpNote()));
+        if (req.getAllergySnapshot() != null) {
+            e.setAllergySnapshot(normalize(req.getAllergySnapshot()));
+        }
+        if (req.getChronicDiseaseSnapshot() != null) {
+            e.setChronicDiseaseSnapshot(normalize(req.getChronicDiseaseSnapshot()));
+        }
+        if (req.getPastMedicalHistory() != null) {
+            e.setPastMedicalHistory(normalize(req.getPastMedicalHistory()));
+        }
+        if (req.getPhysicalExamination() != null) {
+            e.setPhysicalExamination(normalize(req.getPhysicalExamination()));
+        }
+        if (req.getTreatmentPlan() != null) {
+            e.setTreatmentPlan(normalize(req.getTreatmentPlan()));
+        }
+        if (req.getFollowUpDate() != null) {
+            e.setFollowUpDate(req.getFollowUpDate());
+        }
+        if (req.getFollowUpNote() != null) {
+            e.setFollowUpNote(normalize(req.getFollowUpNote()));
+        }
     }
 
 

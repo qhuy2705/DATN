@@ -35,6 +35,7 @@ import {
 } from '@/hooks/use-patient-portal';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { cn } from '@/lib/utils';
+import { statusToneClasses } from '@/lib/status-style-classes';
 import type { PatientAppointmentHistoryItem } from '@/types/api';
 
 const PAGE_SIZE = 10;
@@ -52,32 +53,32 @@ const statusCopy: Record<string, StatusInfo> = {
   REQUESTED: {
     label: 'Chờ xác nhận',
     description: 'PrimeCare đã nhận yêu cầu và đang chờ cơ sở tiếp nhận xác nhận.',
-    badgeClassName: 'border-primary/20 bg-primary/10 text-primary hover:bg-primary/10',
+    badgeClassName: `${statusToneClasses.primary} hover:bg-primary/10`,
   },
   CONFIRMED: {
     label: 'Đã xác nhận',
     description: 'Cơ sở đã xác nhận lịch. Vui lòng đến đúng thời gian đã hẹn.',
-    badgeClassName: 'border-emerald-500/20 bg-emerald-50 text-emerald-700 hover:bg-emerald-50',
+    badgeClassName: `${statusToneClasses.success} hover:bg-success/10`,
   },
   CHECKED_IN: {
     label: 'Đã check-in',
     description: 'Bạn đã được ghi nhận có mặt tại cơ sở.',
-    badgeClassName: 'border-emerald-500/20 bg-emerald-50 text-emerald-700 hover:bg-emerald-50',
+    badgeClassName: `${statusToneClasses.success} hover:bg-success/10`,
   },
   COMPLETED: {
     label: 'Đã hoàn tất',
     description: 'Lượt khám đã kết thúc. Bạn có thể xem kết quả hoặc hóa đơn nếu đã phát sinh.',
-    badgeClassName: 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-100',
+    badgeClassName: `${statusToneClasses.neutral} hover:bg-muted`,
   },
   CANCELLED: {
     label: 'Đã hủy',
     description: 'Lịch hẹn đã được hủy và không còn giữ khung giờ này.',
-    badgeClassName: 'border-rose-500/20 bg-rose-50 text-rose-700 hover:bg-rose-50',
+    badgeClassName: `${statusToneClasses.destructive} hover:bg-destructive/10`,
   },
   NO_SHOW: {
     label: 'Không đến khám',
     description: 'Lịch đã qua nhưng hệ thống không ghi nhận bạn đến cơ sở.',
-    badgeClassName: 'border-amber-500/20 bg-amber-50 text-amber-700 hover:bg-amber-50',
+    badgeClassName: `${statusToneClasses.warning} hover:bg-warning/10`,
   },
 };
 
@@ -86,14 +87,14 @@ function getStatusInfo(status?: string): StatusInfo {
     return {
       label: 'Khởi tạo',
       description: 'Lịch hẹn vừa được tạo hoặc chưa có trạng thái chi tiết.',
-      badgeClassName: 'border-border bg-background text-muted-foreground',
+      badgeClassName: 'border-border bg-background text-muted-foreground hover:bg-background',
     };
   }
 
   return statusCopy[status] ?? {
     label: status,
     description: 'PrimeCare đang cập nhật mô tả trạng thái này.',
-    badgeClassName: 'border-border bg-muted/40 text-muted-foreground',
+    badgeClassName: `${statusToneClasses.neutral} hover:bg-muted`,
   };
 }
 
@@ -292,7 +293,7 @@ function AppointmentCard({
           <Button
             type="button"
             variant="outline"
-            className="h-11 rounded-2xl border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-700"
+            className="h-11 rounded-2xl border-destructive/20 text-destructive hover:bg-destructive/10 hover:text-destructive"
             disabled={cancelPending}
             onClick={() => onCancel(appointment)}
           >
@@ -333,7 +334,7 @@ function CancelAppointmentDialog({
       <DialogContent className="max-h-[92vh] overflow-y-auto rounded-[1.75rem] p-0 sm:max-w-2xl">
         <div className="border-b border-border/70 bg-primary/[0.04] px-6 py-6">
           <DialogHeader>
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 text-rose-700">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
               <AlertTriangle className="h-6 w-6" />
             </div>
             <DialogTitle className="text-2xl tracking-tight">Xác nhận hủy lịch hẹn</DialogTitle>
@@ -373,7 +374,7 @@ function CancelAppointmentDialog({
               </div>
             </div>
 
-            <div className="rounded-[1.25rem] border border-rose-100 bg-rose-50/70 px-4 py-3 text-sm leading-6 text-rose-800">
+            <div className="rounded-[1.25rem] border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm leading-6 text-destructive">
               Sau khi hủy, lịch sẽ không tự chuyển sang khung giờ khác. PrimeCare sẽ cập nhật danh sách lịch hẹn của bạn, và bạn có thể mở luồng đặt lịch để chọn thời gian mới nếu cần.
             </div>
 
@@ -504,7 +505,7 @@ export default function PatientAppointmentsPage() {
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-2xl border border-border/70 bg-white/85 px-4 py-4 shadow-sm">
+              <div className="rounded-2xl border border-border/70 bg-card px-4 py-4 shadow-sm">
                 <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
                   <CalendarClock className="h-4 w-4" />
                   Tổng lịch hẹn
@@ -513,7 +514,7 @@ export default function PatientAppointmentsPage() {
                 <p className="mt-1 text-sm leading-6 text-muted-foreground">{pageLabel}</p>
               </div>
 
-              <div className="rounded-2xl border border-border/70 bg-white/85 px-4 py-4 shadow-sm">
+              <div className="rounded-2xl border border-border/70 bg-card px-4 py-4 shadow-sm">
                 <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
                   <ShieldCheck className="h-4 w-4" />
                   Hỗ trợ thao tác

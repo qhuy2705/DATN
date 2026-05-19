@@ -29,7 +29,7 @@ public class ServiceOrder extends BaseEntity {
     private Branch branch;
     @Enumerated(EnumType.STRING) @Column(name = "status", nullable = false, length = 32)
     private ServiceOrderStatus status;
-    @Enumerated(EnumType.STRING) @Column(name = "payment_status", nullable = false, length = 16)
+    @Enumerated(EnumType.STRING) @Column(name = "payment_status", nullable = false, length = 32)
     private PaymentStatus paymentStatus;
     @Column(name = "estimated_total_amount")
     private Long estimatedTotalAmount;

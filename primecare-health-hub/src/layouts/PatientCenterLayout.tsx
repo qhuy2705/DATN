@@ -17,23 +17,23 @@ export function PatientCenterLayout() {
   const user = useCurrentUser();
 
   return (
-    <div className="bg-[radial-gradient(circle_at_top,_rgba(37,99,235,0.07),_transparent_40%),linear-gradient(180deg,#f8fafc_0%,#eef5ff_100%)]">
+    <div className="bg-muted/20">
       <section className="container-wide py-8 md:py-10">
-        <div className="rounded-[28px] border border-border/70 bg-background/90 p-4 shadow-sm backdrop-blur md:p-6">
+        <div className="rounded-[28px] border border-border/70 bg-card/90 p-4 shadow-sm backdrop-blur md:p-6">
           <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
-            <aside className="rounded-[24px] border border-border/60 bg-slate-950 text-slate-100 shadow-xl">
-              <div className="border-b border-white/10 px-5 py-6">
-                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-sky-200">
+            <aside className="rounded-[24px] border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-xl">
+              <div className="border-b border-sidebar-border px-5 py-6">
+                <div className="mb-4 inline-flex rounded-full border border-sidebar-border bg-sidebar-accent px-3 py-1 text-xs font-medium text-sidebar-accent-foreground">
                   Personal Center
                 </div>
                 <div className="flex items-center gap-3">
-                  <UserAvatar name={user?.fullName || 'Patient'} avatarUrl={user?.avatarUrl} size="lg" className="ring-slate-900" />
+                  <UserAvatar name={user?.fullName || 'Patient'} avatarUrl={user?.avatarUrl} size="lg" className="ring-sidebar-border" />
                   <div className="min-w-0">
                     <p className="truncate text-base font-semibold">{user?.fullName || 'Bệnh nhân PrimeCare'}</p>
-                    <p className="truncate text-sm text-slate-400">{user?.email || 'Quản lý hồ sơ y tế cá nhân'}</p>
+                    <p className="truncate text-sm text-sidebar-foreground/70">{user?.email || 'Quản lý hồ sơ y tế cá nhân'}</p>
                   </div>
                 </div>
-                <p className="mt-4 text-sm leading-6 text-slate-400">
+                <p className="mt-4 text-sm leading-6 text-sidebar-foreground/70">
                   Xem nhanh lịch hẹn, kết quả, hóa đơn và cập nhật hồ sơ của bạn mà không rời khỏi website PrimeCare.
                 </p>
               </div>
@@ -49,8 +49,8 @@ export function PatientCenterLayout() {
                       className={cn(
                         'flex items-center justify-between rounded-2xl px-3.5 py-3 text-sm transition-colors',
                         isActive
-                          ? 'bg-amber-500/90 text-white shadow-lg shadow-amber-500/10'
-                          : 'text-slate-300 hover:bg-white/5 hover:text-white',
+                          ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-lg shadow-primary/10'
+                          : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
                       )}
                     >
                       <span className="flex items-center gap-3">

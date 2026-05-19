@@ -29,12 +29,27 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useDashboardBreakdown, useDashboardKpis, useDashboardOverview } from '@/hooks/use-admin-data';
 import { cn } from '@/lib/utils';
+import { toLocalDateInputValue } from '@/lib/date';
 import type {
   DashboardBreakdownItem,
   DashboardBranchRevenue,
   DashboardDoctorKpi,
   DashboardSpecialtyKpi,
 } from '@/types/api';
+
+type DashboardPeriod = 'today' | 'month' | 'year' | 'custom';
+
+type DashboardFilterState = {
+  period: DashboardPeriod;
+  fromDate: string;
+  toDate: string;
+};
+
+type DashboardResolvedRange = {
+  period?: string;
+  fromDate?: string;
+  toDate?: string;
+};
 
 const pieColors = [
   'hsl(var(--primary))',
@@ -76,70 +91,96 @@ function formatShortDate(value: string) {
   return String(value).slice(5);
 }
 
-function calculateDayRange(
-  period: 'today' | 'month' | 'year' | 'custom',
-  fromDate: string,
-  toDate: string,
-) {
-  if (period === 'today') return 1;
-  if (period === 'month') {
-    const now = new Date();
-    return Math.max(now.getDate(), 1);
-  }
-  if (period === 'year') {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), 0, 1);
-    const diff = Math.floor((now.getTime() - start.getTime()) / 86400000) + 1;
-    return Math.max(diff, 1);
-  }
-
-  if (!fromDate || !toDate) return 1;
-  const start = new Date(`${fromDate}T00:00:00`);
-  const end = new Date(`${toDate}T00:00:00`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 1;
-  const diff = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
-  return Math.min(Math.max(diff, 1), 366);
-}
-
-function getPeriodLabel(period: 'today' | 'month' | 'year' | 'custom') {
+function getPeriodLabel(period: DashboardPeriod) {
   if (period === 'today') return 'hôm nay';
   if (period === 'month') return 'tháng này';
   if (period === 'year') return 'năm nay';
   return 'khoảng thời gian đã chọn';
 }
 
+function getDashboardPresetRange(period: Exclude<DashboardPeriod, 'custom'>) {
+  const now = new Date();
+  const today = toLocalDateInputValue(now);
+
+  if (period === 'month') {
+    return {
+      fromDate: toLocalDateInputValue(new Date(now.getFullYear(), now.getMonth(), 1)),
+      toDate: today,
+    };
+  }
+
+  if (period === 'year') {
+    return {
+      fromDate: toLocalDateInputValue(new Date(now.getFullYear(), 0, 1)),
+      toDate: today,
+    };
+  }
+
+  return { fromDate: today, toDate: today };
+}
+
+function getSelectedDashboardRange(filter: DashboardFilterState) {
+  if (filter.period === 'custom') {
+    return {
+      fromDate: filter.fromDate,
+      toDate: filter.toDate,
+    };
+  }
+
+  return getDashboardPresetRange(filter.period);
+}
+
+function buildDashboardRangeParams(filter: DashboardFilterState): Record<string, string> {
+  if (filter.period === 'custom') {
+    return {
+      period: filter.period,
+      fromDate: filter.fromDate,
+      toDate: filter.toDate,
+    };
+  }
+
+  return { period: filter.period };
+}
+
+function formatActiveDashboardRange(range: DashboardResolvedRange, today: string) {
+  const fromDate = range.fromDate?.slice(0, 10);
+  const toDate = range.toDate?.slice(0, 10);
+
+  if (fromDate === today && toDate === today) {
+    return 'Đang xem dữ liệu hôm nay';
+  }
+
+  if (fromDate && toDate) {
+    return `Đang xem dữ liệu từ ${fromDate} đến ${toDate}`;
+  }
+
+  return '';
+}
+
 export default function DashboardPage() {
-  const [period, setPeriod] = useState<'today' | 'month' | 'year' | 'custom'>('today');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
-  const [appliedCustomRange, setAppliedCustomRange] = useState({ fromDate: '', toDate: '' });
+  const today = useMemo(() => toLocalDateInputValue(), []);
+  const [dashboardFilter, setDashboardFilter] = useState<DashboardFilterState>(() => ({
+    period: 'today',
+    fromDate: today,
+    toDate: today,
+  }));
 
-  const queryParams = useMemo(() => {
-    if (period === 'custom') {
-      return {
-        period,
-        ...(appliedCustomRange.fromDate ? { fromDate: appliedCustomRange.fromDate } : {}),
-        ...(appliedCustomRange.toDate ? { toDate: appliedCustomRange.toDate } : {}),
-      };
-    }
-
-    return { period };
-  }, [appliedCustomRange.fromDate, appliedCustomRange.toDate, period]);
-
-  const analyticsDays = useMemo(
-    () => calculateDayRange(period, appliedCustomRange.fromDate, appliedCustomRange.toDate),
-    [appliedCustomRange.fromDate, appliedCustomRange.toDate, period],
+  const dashboardRangeParams = useMemo(
+    () => buildDashboardRangeParams(dashboardFilter),
+    [dashboardFilter],
   );
-
-  const { data: overviewData, isLoading: overviewLoading } = useDashboardOverview(queryParams);
-  const { data: breakdownData, isLoading: breakdownLoading } = useDashboardBreakdown({
-    days: String(analyticsDays),
+  const breakdownParams = useMemo(() => ({
+    ...dashboardRangeParams,
     topN: '5',
-  });
-  const { data: kpisData, isLoading: kpisLoading } = useDashboardKpis({
-    days: String(analyticsDays),
+  }), [dashboardRangeParams]);
+  const kpisParams = useMemo(() => ({
+    ...dashboardRangeParams,
     topN: '8',
-  });
+  }), [dashboardRangeParams]);
+
+  const { data: overviewData, isLoading: overviewLoading } = useDashboardOverview(dashboardRangeParams);
+  const { data: breakdownData, isLoading: breakdownLoading } = useDashboardBreakdown(breakdownParams);
+  const { data: kpisData, isLoading: kpisLoading } = useDashboardKpis(kpisParams);
 
   const overview =
     overviewData ??
@@ -182,9 +223,52 @@ export default function DashboardPage() {
       value: Number(value),
     }));
 
-  const periodLabel = getPeriodLabel(period);
+  const selectedDashboardRange = useMemo(
+    () => getSelectedDashboardRange(dashboardFilter),
+    [dashboardFilter],
+  );
+  const backendResolvedRange =
+    overviewData?.resolvedRange ?? breakdownData?.resolvedRange ?? kpisData?.resolvedRange;
+  const displayRange =
+    backendResolvedRange?.fromDate && backendResolvedRange.toDate
+      ? backendResolvedRange
+      : selectedDashboardRange;
+  const activeRangeLabel = formatActiveDashboardRange(displayRange, today);
+  const periodLabel = getPeriodLabel(dashboardFilter.period);
+  const netRevenue = overview.netRevenue ?? overview.totalRevenue;
+  const grossRevenue = overview.grossRevenue ?? netRevenue;
+  const refundedAmount = overview.refundedAmount ?? Math.max(0, grossRevenue - netRevenue);
+  const patientMetricTitle = overview.patientMetricLabel ?? 'Lượt khám';
+  const patientMetricDescription = overview.patientMetricDescription ?? periodLabel;
   const completionColor = overview.completionRate >= 85 ? 'text-success' : overview.completionRate >= 60 ? 'text-warning' : 'text-destructive';
   const completionFill = overview.completionRate >= 85 ? 'bg-success' : overview.completionRate >= 60 ? 'bg-warning' : 'bg-destructive';
+
+  const updateDashboardPeriod = (nextPeriod: DashboardPeriod) => {
+    setDashboardFilter((current) => ({
+      ...current,
+      period: nextPeriod,
+      fromDate: current.fromDate || today,
+      toDate: current.toDate || today,
+    }));
+  };
+
+  const updateCustomFromDate = (nextFromDate: string) => {
+    if (!nextFromDate) return;
+    setDashboardFilter((current) => ({
+      ...current,
+      fromDate: nextFromDate,
+      toDate: current.toDate && current.toDate >= nextFromDate ? current.toDate : nextFromDate,
+    }));
+  };
+
+  const updateCustomToDate = (nextToDate: string) => {
+    if (!nextToDate) return;
+    setDashboardFilter((current) => ({
+      ...current,
+      fromDate: current.fromDate && current.fromDate <= nextToDate ? current.fromDate : nextToDate,
+      toDate: nextToDate,
+    }));
+  };
 
   return (
     <div className="space-y-ui-lg">
@@ -202,58 +286,70 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          <div className="flex flex-wrap items-end gap-ui-sm">
-            <div className="inline-flex rounded-lg border border-border bg-muted/25 p-1">
-              {[
-                { value: 'today', label: 'Hôm nay' },
-                { value: 'month', label: 'Tháng này' },
-                { value: 'year', label: 'Năm nay' },
-                { value: 'custom', label: 'Tùy chọn' },
-              ].map((option) => (
-                <Button
-                  key={option.value}
-                  type="button"
-                  variant={period === option.value ? 'default' : 'ghost'}
-                  size="sm"
-                  className={cn('h-8 rounded-md px-3', period !== option.value && 'text-muted-foreground')}
-                  onClick={() => setPeriod(option.value as typeof period)}
-                >
-                  {option.label}
-                </Button>
-              ))}
-            </div>
-            {period === 'custom' && (
-              <div className="flex flex-wrap items-end gap-ui-xs rounded-lg border border-border bg-background p-ui-xs shadow-sm">
-                <div>
-                  <label htmlFor="dashboard-from-date" className="mb-1 block text-xs font-medium text-muted-foreground">Từ ngày</label>
-                  <Input id="dashboard-from-date" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-8 min-w-[145px]" />
-                </div>
-                <div>
-                  <label htmlFor="dashboard-to-date" className="mb-1 block text-xs font-medium text-muted-foreground">Đến ngày</label>
-                  <Input id="dashboard-to-date" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-8 min-w-[145px]" />
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-8"
-                  onClick={() => setAppliedCustomRange({ fromDate, toDate })}
-                  disabled={!fromDate || !toDate}
-                >
-                  Áp dụng
-                </Button>
+          <div className="flex flex-col gap-ui-xs xl:items-end">
+            <div className="flex flex-wrap items-end gap-ui-sm xl:justify-end">
+              <div className="inline-flex rounded-lg border border-border bg-muted/25 p-1">
+                {[
+                  { value: 'today', label: 'Hôm nay' },
+                  { value: 'month', label: 'Tháng này' },
+                  { value: 'year', label: 'Năm nay' },
+                  { value: 'custom', label: 'Tùy chọn' },
+                ].map((option) => (
+                  <Button
+                    key={option.value}
+                    type="button"
+                    variant={dashboardFilter.period === option.value ? 'default' : 'ghost'}
+                    size="sm"
+                    className={cn('h-8 rounded-md px-3', dashboardFilter.period !== option.value && 'text-muted-foreground')}
+                    onClick={() => updateDashboardPeriod(option.value as DashboardPeriod)}
+                  >
+                    {option.label}
+                  </Button>
+                ))}
               </div>
-            )}
+              {dashboardFilter.period === 'custom' && (
+                <div className="flex flex-wrap items-end gap-ui-xs rounded-lg border border-border bg-background p-ui-xs shadow-sm">
+                  <div>
+                    <label htmlFor="dashboard-from-date" className="mb-1 block text-xs font-medium text-muted-foreground">Từ ngày</label>
+                    <Input
+                      id="dashboard-from-date"
+                      type="date"
+                      value={dashboardFilter.fromDate}
+                      max={dashboardFilter.toDate}
+                      onChange={(e) => updateCustomFromDate(e.target.value)}
+                      className="h-8 min-w-[145px]"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="dashboard-to-date" className="mb-1 block text-xs font-medium text-muted-foreground">Đến ngày</label>
+                    <Input
+                      id="dashboard-to-date"
+                      type="date"
+                      value={dashboardFilter.toDate}
+                      min={dashboardFilter.fromDate}
+                      onChange={(e) => updateCustomToDate(e.target.value)}
+                      className="h-8 min-w-[145px]"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+            {activeRangeLabel ? (
+              <p className="text-xs leading-5 text-muted-foreground xl:text-right">
+                {activeRangeLabel}
+              </p>
+            ) : null}
           </div>
         </div>
       </section>
 
       <div className="grid grid-cols-1 gap-ui-sm min-[380px]:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <OperationalKpiCard title="Lịch hẹn" value={overviewLoading ? '...' : overview.totalAppointmentsToday.toLocaleString('vi-VN')} label={periodLabel} icon={CalendarCheck2} />
-        <OperationalKpiCard title="Bệnh nhân" value={overviewLoading ? '...' : overview.totalPatientsToday.toLocaleString('vi-VN')} label="đã tiếp nhận" icon={Stethoscope} />
+        <OperationalKpiCard title={patientMetricTitle} value={overviewLoading ? '...' : overview.totalPatientsToday.toLocaleString('vi-VN')} label={patientMetricDescription} icon={Stethoscope} />
         <OperationalKpiCard title="Check-in" value={overviewLoading ? '...' : overview.checkedInAppointments.toLocaleString('vi-VN')} label="đã xác nhận" icon={UserRoundCheck} />
         <OperationalKpiCard title="Đang khám" value={overviewLoading ? '...' : overview.inProgressEncounters.toLocaleString('vi-VN')} label="cần theo dõi" icon={UsersRound} />
         <OperationalKpiCard title="Chờ dịch vụ" value={overviewLoading ? '...' : overview.waitingServiceItems.toLocaleString('vi-VN')} label="hàng đợi CLS" icon={Clock3} />
-        <OperationalKpiCard title="Doanh thu" value={overviewLoading ? '...' : formatCompactCurrency(overview.totalRevenue)} label={periodLabel} icon={Banknote} />
+        <OperationalKpiCard title="Doanh thu ròng" value={overviewLoading ? '...' : formatCompactCurrency(netRevenue)} label={periodLabel} icon={Banknote} />
       </div>
 
       <div className="grid grid-cols-1 gap-ui-lg xl:grid-cols-[minmax(0,1fr)_24rem]">
@@ -323,7 +419,7 @@ export default function DashboardPage() {
                 <CardDescription className="leading-5">Các chỉ số cần quét nhanh trong ca trực.</CardDescription>
               </div>
               <Badge variant="secondary" className="shrink-0">
-                {period === 'today' ? 'Theo ngày' : period === 'custom' ? 'Khoảng chọn' : 'Lũy kế'}
+                {dashboardFilter.period === 'today' ? 'Theo ngày' : dashboardFilter.period === 'custom' ? 'Khoảng chọn' : 'Lũy kế'}
               </Badge>
             </div>
           </CardHeader>
@@ -355,7 +451,12 @@ export default function DashboardPage() {
               <MetricRow label="Đã check-in" value={overview.checkedInAppointments.toLocaleString('vi-VN')} />
               <MetricRow label="Đang khám" value={overview.inProgressEncounters.toLocaleString('vi-VN')} tone="primary" />
               <MetricRow label="Không đến" value={overview.noShowAppointments.toLocaleString('vi-VN')} tone="danger" />
-              <MetricRow label="Doanh thu đã thu" value={formatCompactCurrency(overview.totalRevenue)} tone="primary" />
+              <MetricRow label="Tổng đã thu" value={formatCompactCurrency(grossRevenue)} />
+              <MetricRow label="Đã hoàn" value={formatCompactCurrency(refundedAmount)} tone="danger" />
+              {typeof overview.refundsProcessedInRange === 'number' ? (
+                <MetricRow label="Hoàn phát sinh" value={formatCompactCurrency(overview.refundsProcessedInRange)} tone="danger" />
+              ) : null}
+              <MetricRow label="Doanh thu ròng" value={formatCompactCurrency(netRevenue)} tone="primary" />
             </div>
           </CardContent>
         </Card>
@@ -363,8 +464,8 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-ui-lg xl:grid-cols-3">
         <ChartCard
-          title="Lịch hẹn 7 ngày gần nhất"
-          description="Số lịch hẹn được tạo hoặc ghi nhận theo từng ngày."
+          title="Xu hướng lịch hẹn"
+          description={`Số lịch hẹn được tạo hoặc ghi nhận theo ${periodLabel}.`}
           loading={overviewLoading}
           empty={overview.appointmentsTrend.length === 0}
           emptyLabel="Chưa có lịch hẹn trong chuỗi thời gian này."
@@ -382,12 +483,12 @@ export default function DashboardPage() {
         </ChartCard>
 
         <ChartCard
-          title="Doanh thu 7 ngày gần nhất"
-          description="Theo dõi nhịp thu ngân và các đỉnh doanh thu gần đây."
+          title="Doanh thu sau hoàn tiền"
+          description={`Theo dõi doanh thu ròng theo ${periodLabel}.`}
           loading={overviewLoading}
           empty={overview.revenueTrend.length === 0}
           emptyLabel="Chưa có doanh thu để hiển thị."
-          emptyHelper="Doanh thu sẽ xuất hiện khi có hóa đơn đã thu trong bộ lọc hiện tại."
+          emptyHelper="Doanh thu ròng sẽ xuất hiện khi có hóa đơn đã thu trong bộ lọc hiện tại."
         >
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={overview.revenueTrend}>
@@ -746,13 +847,14 @@ function SpecialtyKpiCard({ items, loading }: { items: DashboardSpecialtyKpi[]; 
 }
 
 function BranchRevenueCard({ items, loading }: { items: DashboardBranchRevenue[]; loading?: boolean }) {
-  const maxValue = Math.max(...items.map((item) => item.paidRevenue), 1);
+  const getNetRevenue = (item: DashboardBranchRevenue) => item.netRevenue ?? item.paidRevenue;
+  const maxValue = Math.max(...items.map(getNetRevenue), 1);
 
   return (
     <Card className={dashboardSecondaryCardClass}>
       <CardHeader className={dashboardCardHeaderClass}>
-        <CardTitle className="text-[0.95rem] font-semibold leading-5">Doanh thu theo chi nhánh</CardTitle>
-        <CardDescription className="leading-5">Xem nơi có hiệu suất thu cao để tối ưu quầy thu ngân.</CardDescription>
+        <CardTitle className="text-[0.95rem] font-semibold leading-5">Doanh thu ròng theo chi nhánh</CardTitle>
+        <CardDescription className="leading-5">Xem doanh thu sau hoàn tiền để tối ưu quầy thu ngân.</CardDescription>
       </CardHeader>
       <CardContent className="p-ui-md">
         {loading ? (
@@ -761,18 +863,26 @@ function BranchRevenueCard({ items, loading }: { items: DashboardBranchRevenue[]
           <EmptyLine label="Chưa có dữ liệu doanh thu chi nhánh." />
         ) : (
           <div className="space-y-ui-sm">
-            {items.slice(0, 6).map((item) => (
-              <div key={`${item.branchId || item.branchName}`} className="space-y-1.5">
-                <div className="flex items-center justify-between gap-ui-sm">
-                  <p className="truncate text-sm font-medium text-foreground">{item.branchName}</p>
-                  <span className="text-sm font-semibold tabular-nums text-foreground">{formatCompactCurrency(item.paidRevenue)}</span>
+            {items.slice(0, 6).map((item) => {
+              const net = getNetRevenue(item);
+              const gross = item.grossRevenue ?? net;
+              const refunded = item.refundedAmount ?? Math.max(0, gross - net);
+
+              return (
+                <div key={`${item.branchId || item.branchName}`} className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-ui-sm">
+                    <p className="truncate text-sm font-medium text-foreground">{item.branchName}</p>
+                    <span className="text-sm font-semibold tabular-nums text-foreground">{formatCompactCurrency(net)}</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full rounded-full bg-accent" style={{ width: `${Math.max((net / maxValue) * 100, 8)}%` }} />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Tổng đã thu {formatCurrency(gross)} · Đã hoàn {formatCurrency(refunded)}
+                  </p>
                 </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-accent" style={{ width: `${Math.max((item.paidRevenue / maxValue) * 100, 8)}%` }} />
-                </div>
-                <p className="text-xs text-muted-foreground">{formatCurrency(item.paidRevenue)}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </CardContent>

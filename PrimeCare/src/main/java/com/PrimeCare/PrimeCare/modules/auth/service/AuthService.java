@@ -11,6 +11,7 @@ import com.PrimeCare.PrimeCare.modules.auth.repository.AccessTokenBlacklistRepos
 import com.PrimeCare.PrimeCare.modules.auth.repository.RefreshTokenRepository;
 import com.PrimeCare.PrimeCare.modules.auth.repository.UserRepository;
 import com.PrimeCare.PrimeCare.modules.auth.security.JwtService;
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.shared.enums.DoctorStatus;
 import com.PrimeCare.PrimeCare.shared.enums.StaffStatus;
 import com.PrimeCare.PrimeCare.shared.enums.UserStatus;
@@ -27,6 +28,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Service
@@ -40,6 +42,7 @@ public class AuthService {
     private final AccessTokenBlacklistRepository blacklistRepository;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
+    private final AuditLogService auditLogService;
 
     @Value("${app.jwt.refreshTokenDays}")
     private int refreshTokenDays;
@@ -51,18 +54,37 @@ public class AuthService {
     }
 
     public AuthIssueResult login(LoginRequest req, String userAgent, String ip) {
-        User user = userRepository.findByEmailOrPhone(req.getIdentifier().trim())
-                .orElseThrow(() -> new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS));
+        String identifier = req.getIdentifier().trim();
+        User user = userRepository.findByEmailOrPhone(identifier).orElse(null);
+        if (user == null) {
+            auditLoginFailure(identifier, null, ErrorCode.AUTH_INVALID_CREDENTIALS.name(), userAgent, ip);
+            throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS);
+        }
 
-        ensureUserCanAuthenticate(user);
+        try {
+            ensureUserCanAuthenticate(user);
+        } catch (ApiException ex) {
+            auditLoginFailure(identifier, user, ex.getErrorCode().name(), userAgent, ip);
+            throw ex;
+        }
 
         if (!passwordEncoder.matches(req.getPassword(), user.getPasswordHash())) {
+            auditLoginFailure(identifier, user, ErrorCode.AUTH_INVALID_CREDENTIALS.name(), userAgent, ip);
             throw new ApiException(ErrorCode.AUTH_INVALID_CREDENTIALS);
         }
 
         TokenResponse res = issueAccess(user);
         String familyId = java.util.UUID.randomUUID().toString().replace("-", "");
         String refresh = createAndStoreRefreshToken(user, familyId, userAgent, ip);
+
+        auditLogService.log(user, "LOGIN_SUCCESS", "AUTH", user.getId(), null, snapshotAuthEvent(
+                user,
+                identifier,
+                "SUCCESS",
+                null,
+                userAgent,
+                ip
+        ));
 
         return new AuthIssueResult(res, refresh);
     }
@@ -134,13 +156,15 @@ public class AuthService {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Mật khẩu mới không được trùng mật khẩu hiện tại");
         }
 
+        Map<String, Object> before = snapshotUserAccount(user);
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         if (user.getStatus() == UserStatus.PENDING_ACTIVATION) {
             user.setStatus(resolveActiveStatus(user));
         }
         userRepository.save(user);
 
-        logoutAllSessions(user.getId());
+        handleRefreshReuseDetected(user.getId(), null);
+        auditLogService.log(user, "CHANGE_PASSWORD", "AUTH", user.getId(), before, snapshotUserAccount(user));
     }
 
     @Transactional
@@ -153,12 +177,15 @@ public class AuthService {
             Long userId = rt.getUser().getId();
             String familyId = rt.getFamilyId();
             handleRefreshReuseDetected(userId, familyId);
+            auditLogService.log(rt.getUser(), "LOGOUT", "AUTH", userId, null, snapshotSessionRevocation(rt.getUser(), "CURRENT_SESSION"));
         });
     }
 
     @Transactional
     public void logoutAllSessions(Long userId) {
+        User user = userRepository.findById(userId).orElse(null);
         handleRefreshReuseDetected(userId, null);
+        auditLogService.log(user, "LOGOUT_ALL_SESSIONS", "AUTH", userId, null, snapshotSessionRevocation(user, "ALL_SESSIONS"));
     }
 
     private void ensureUserCanAuthenticate(User user) {
@@ -270,6 +297,8 @@ public class AuthService {
         return CurrentUserResponse.builder()
                 .id(user.getId())
                 .email(user.getEmail())
+                .emailVerified(user.getEmailVerifiedAt() != null)
+                .emailVerifiedAt(user.getEmailVerifiedAt())
                 .fullName(fullName)
                 .role(user.getRole().name())
                 .avatarUrl(avatarUrl)
@@ -317,5 +346,63 @@ public class AuthService {
         byte[] bytes = new byte[64];
         secureRandom.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    private void auditLoginFailure(String identifier, User user, String reason, String userAgent, String ip) {
+        auditLogService.log(null, "LOGIN_FAILED", "AUTH", user != null ? user.getId() : null, null, snapshotAuthEvent(
+                user,
+                identifier,
+                "FAILED",
+                reason,
+                userAgent,
+                ip
+        ));
+    }
+
+    private Map<String, Object> snapshotAuthEvent(
+            User user,
+            String attemptedIdentifier,
+            String outcome,
+            String failureReason,
+            String userAgent,
+            String ip
+    ) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("userId", user != null ? user.getId() : null);
+        data.put("attemptedIdentifier", attemptedIdentifier);
+        data.put("email", user != null ? user.getEmail() : null);
+        data.put("role", user != null && user.getRole() != null ? user.getRole().name() : null);
+        data.put("status", user != null && user.getStatus() != null ? user.getStatus().name() : null);
+        data.put("doctorProfileId", user != null && user.getDoctorProfile() != null ? user.getDoctorProfile().getId() : null);
+        data.put("staffProfileId", user != null && user.getStaffProfile() != null ? user.getStaffProfile().getId() : null);
+        data.put("patientId", user != null && user.getPatient() != null ? user.getPatient().getId() : null);
+        data.put("outcome", outcome);
+        data.put("failureReason", failureReason);
+        data.put("ipAddress", ip);
+        data.put("userAgent", userAgent);
+        return data;
+    }
+
+    private Map<String, Object> snapshotUserAccount(User user) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("userId", user.getId());
+        data.put("email", user.getEmail());
+        data.put("phone", user.getPhone());
+        data.put("role", user.getRole() != null ? user.getRole().name() : null);
+        data.put("status", user.getStatus() != null ? user.getStatus().name() : null);
+        data.put("doctorProfileId", user.getDoctorProfile() != null ? user.getDoctorProfile().getId() : null);
+        data.put("staffProfileId", user.getStaffProfile() != null ? user.getStaffProfile().getId() : null);
+        data.put("patientId", user.getPatient() != null ? user.getPatient().getId() : null);
+        data.put("passwordConfigured", user.getPasswordHash() != null && !user.getPasswordHash().isBlank());
+        return data;
+    }
+
+    private Map<String, Object> snapshotSessionRevocation(User user, String scope) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("userId", user != null ? user.getId() : null);
+        data.put("email", user != null ? user.getEmail() : null);
+        data.put("role", user != null && user.getRole() != null ? user.getRole().name() : null);
+        data.put("scope", scope);
+        return data;
     }
 }

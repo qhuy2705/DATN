@@ -1,5 +1,6 @@
 package com.PrimeCare.PrimeCare.modules.medical_service.service;
 
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.medical_service.dto.request.CreateMedicalServiceRequest;
 import com.PrimeCare.PrimeCare.modules.medical_service.dto.request.UpdateMedicalServiceRequest;
 import com.PrimeCare.PrimeCare.modules.medical_service.dto.response.MedicalServiceResponse;
@@ -18,14 +19,17 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 public class MedicalServiceService {
 
     private final MedicalServiceRepository repository;
+    private final AuditLogService auditLogService;
 
     @Transactional
     public MedicalServiceResponse create(CreateMedicalServiceRequest req) {
@@ -68,13 +72,16 @@ public class MedicalServiceService {
                                          .resultReportTitle(resultReportTitle)
                                          .build();
 
-        return toResponse(repository.save(e));
+        e = repository.save(e);
+        auditLogService.log(null, "CREATE_MEDICAL_SERVICE", "MEDICAL_SERVICE", e.getId(), null, snapshotMedicalService(e));
+        return toResponse(e);
     }
 
     @Transactional
     public MedicalServiceResponse update(Long id, UpdateMedicalServiceRequest req) {
         MedicalService e = repository.findById(id)
                                      .orElseThrow(() -> new ApiException(ErrorCode.MEDICAL_SERVICE_NOT_FOUND));
+        Map<String, Object> before = snapshotMedicalService(e);
 
         if (req.getNameVn() != null) e.setNameVn(req.getNameVn());
         if (req.getNameEn() != null) e.setNameEn(req.getNameEn());
@@ -116,7 +123,9 @@ public class MedicalServiceService {
             e.setResultReportTitle(ServiceResultTemplateSupport.resolveReportTitle(e));
         }
 
-        return toResponse(repository.save(e));
+        e = repository.save(e);
+        auditLogService.log(null, "UPDATE_MEDICAL_SERVICE", "MEDICAL_SERVICE", e.getId(), before, snapshotMedicalService(e));
+        return toResponse(e);
     }
 
     @Transactional(readOnly = true)
@@ -139,8 +148,11 @@ public class MedicalServiceService {
     public MedicalServiceResponse updateStatus(Long id, MedicalServiceStatus status) {
         MedicalService service = repository.findById(id)
                 .orElseThrow(() -> new ApiException(ErrorCode.MEDICAL_SERVICE_NOT_FOUND));
+        Map<String, Object> before = snapshotMedicalService(service);
         service.setStatus(status);
-        return toResponse(repository.save(service));
+        service = repository.save(service);
+        auditLogService.log(null, "UPDATE_MEDICAL_SERVICE_STATUS", "MEDICAL_SERVICE", service.getId(), before, snapshotMedicalService(service));
+        return toResponse(service);
     }
 
     @Transactional(readOnly = true)
@@ -214,5 +226,19 @@ public class MedicalServiceService {
     private String normalizeDepartmentCode(String departmentCode) {
         String trimmed = StringUtil.trimToNull(departmentCode);
         return trimmed != null ? trimmed.toUpperCase(Locale.ROOT) : null;
+    }
+
+    private Map<String, Object> snapshotMedicalService(MedicalService service) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("id", service.getId());
+        data.put("code", service.getCode());
+        data.put("nameVn", service.getNameVn());
+        data.put("nameEn", service.getNameEn());
+        data.put("serviceType", service.getServiceType() != null ? service.getServiceType().name() : null);
+        data.put("departmentCode", service.getDepartmentCode());
+        data.put("basePrice", service.getBasePrice());
+        data.put("status", service.getStatus() != null ? service.getStatus().name() : null);
+        data.put("publicVisible", service.getPublicVisible());
+        return data;
     }
 }

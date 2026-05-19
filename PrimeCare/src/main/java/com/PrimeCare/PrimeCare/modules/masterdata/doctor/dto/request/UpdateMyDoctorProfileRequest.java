@@ -1,15 +1,13 @@
 package com.PrimeCare.PrimeCare.modules.masterdata.doctor.dto.request;
 
-import jakarta.validation.constraints.NotBlank;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Getter;
 import lombok.Setter;
 
 @Getter
 @Setter
+@JsonIgnoreProperties({"fullName", "yearsExp"})
 public class UpdateMyDoctorProfileRequest {
-    @NotBlank
-    private String fullName;
-
     private String displayTitleVn;
     private String displayTitleEn;
 
@@ -25,6 +23,5 @@ public class UpdateMyDoctorProfileRequest {
     private String achievementsVn;
     private String achievementsEn;
 
-    private Integer yearsExp;
     private String avatarUrl;
 }

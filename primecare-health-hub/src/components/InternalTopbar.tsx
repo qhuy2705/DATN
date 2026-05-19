@@ -33,7 +33,8 @@ import {
   useNotifications,
   useUnreadNotificationCount,
 } from '@/hooks/use-notification-data';
-import type { InternalNotification } from '@/types/api';
+import { canAccessInternalRoute } from '@/lib/route-access';
+import type { AppRole, InternalNotification } from '@/types/api';
 
 function formatNotificationTime(value?: string) {
   if (!value) return '';
@@ -82,7 +83,26 @@ function notificationTone(notification: InternalNotification) {
   };
 }
 
-function getNotificationRoute(item: InternalNotification) {
+function getNotificationRoute(item: InternalNotification, role?: AppRole) {
+  const entityType = item.entityType?.toUpperCase();
+  const route =
+    (
+      entityType === 'INVENTORY' ||
+      entityType === 'PHARMACY_INVENTORY' ||
+      entityType === 'BATCH' ||
+      entityType === 'MEDICATION_BATCH'
+    )
+      ? item.route || '/app/pharmacy/inventory'
+      : item.route;
+
+  if (!route || !role || !canAccessInternalRoute(route, role)) {
+    return undefined;
+  }
+
+  return route;
+}
+
+function getFallbackNotificationRoute(item: InternalNotification) {
   const entityType = item.entityType?.toUpperCase();
   if (
     entityType === 'INVENTORY' ||
@@ -90,18 +110,19 @@ function getNotificationRoute(item: InternalNotification) {
     entityType === 'BATCH' ||
     entityType === 'MEDICATION_BATCH'
   ) {
-    return item.route || '/app/pharmacy/inventory';
+    return '/app/pharmacy/inventory';
   }
-
-  return item.route;
+  return undefined;
 }
 
 function NotificationItem({
   item,
   onRead,
+  role,
 }: {
   item: InternalNotification;
   onRead: (id: string) => void;
+  role?: AppRole;
 }) {
   const tone = notificationTone(item);
   const Icon = tone.icon;
@@ -122,7 +143,10 @@ function NotificationItem({
       {!item.read ? <span className="mt-3 h-2 w-2 shrink-0 rounded-full bg-primary" /> : null}
     </div>
   );
-  const route = getNotificationRoute(item);
+  const route = getNotificationRoute(
+    { ...item, route: item.route || getFallbackNotificationRoute(item) },
+    role,
+  );
 
   if (route) {
     return (
@@ -223,6 +247,7 @@ export function InternalTopbar() {
                   <NotificationItem
                     key={`${item.id}-${item.createdAt}`}
                     item={item}
+                    role={user?.role}
                     onRead={(id) => {
                       if (!item.read) markRead.mutate(id);
                     }}

@@ -3,6 +3,7 @@ package com.PrimeCare.PrimeCare.modules.masterdata.doctor.mapper;
 import com.PrimeCare.PrimeCare.modules.auth.entity.User;
 import com.PrimeCare.PrimeCare.modules.masterdata.doctor.dto.response.DoctorProfileResponse;
 import com.PrimeCare.PrimeCare.modules.masterdata.doctor.entity.DoctorProfile;
+import com.PrimeCare.PrimeCare.modules.masterdata.doctor.service.DoctorOperationalGuardService;
 import com.PrimeCare.PrimeCare.shared.enums.BranchStatus;
 import com.PrimeCare.PrimeCare.shared.enums.DoctorStatus;
 
@@ -38,15 +39,12 @@ public class DoctorProfileMapper {
         if (currentStatus == DoctorStatus.INACTIVE) {
             r.setEffectiveStatus(DoctorStatus.INACTIVE);
             r.setInactiveReason("SELF_INACTIVE");
-            r.setBookable(false);
         } else if (d.getBranch() != null && d.getBranch().getStatus() != BranchStatus.ACTIVE) {
             r.setEffectiveStatus(DoctorStatus.INACTIVE);
             r.setInactiveReason("BRANCH_INACTIVE");
-            r.setBookable(false);
         } else {
             r.setEffectiveStatus(DoctorStatus.ACTIVE);
             r.setInactiveReason(null);
-            r.setBookable(true);
         }
 
         if (d.getDoctorSpecialties() != null) {
@@ -72,6 +70,11 @@ public class DoctorProfileMapper {
             r.setAccountRole(account.getRole().name());
             r.setAccountStatus(account.getStatus().name());
         }
+
+        var readiness = DoctorOperationalGuardService.evaluateReadiness(d, account);
+        r.setOperationalReady(readiness.operationalReady());
+        r.setBookable(readiness.operationalReady());
+        r.setNotReadyReason(readiness.notReadyReason());
         return r;
     }
 }

@@ -14,6 +14,6 @@ public record VnpayVerificationResult(
     public boolean isSuccess() {
         return validSignature
                 && "00".equals(responseCode)
-                && (transactionStatus == null || transactionStatus.isBlank() || "00".equals(transactionStatus));
+                && "00".equals(transactionStatus);
     }
 }

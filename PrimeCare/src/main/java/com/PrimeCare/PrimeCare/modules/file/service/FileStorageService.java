@@ -17,6 +17,7 @@ import com.PrimeCare.PrimeCare.modules.file.entity.FileObject;
 import com.PrimeCare.PrimeCare.modules.file.repository.FileObjectRepository;
 import com.PrimeCare.PrimeCare.shared.enums.FileOwnerType;
 import com.PrimeCare.PrimeCare.shared.enums.StorageProvider;
+import com.PrimeCare.PrimeCare.shared.enums.ServiceResultStatus;
 import com.PrimeCare.PrimeCare.shared.exception.ApiException;
 import com.PrimeCare.PrimeCare.shared.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -52,6 +53,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 public class FileStorageService {
+
+    private static final String VERIFIED_SERVICE_RESULT_EDIT_MESSAGE = "Verified service results cannot be edited.";
 
     private static final Set<String> ALLOWED_AVATAR_TYPES = Set.of(
             MediaType.IMAGE_JPEG_VALUE,
@@ -470,6 +473,9 @@ public class FileStorageService {
         if (ownerType == null || ownerId == null) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Thiếu thông tin chủ sở hữu file");
         }
+        if (!avatarUpload) {
+            assertMutableServiceResultOwner(ownerType, ownerId);
+        }
         if (hasElevatedInternalAccess(requester)) {
             return;
         }
@@ -491,6 +497,19 @@ public class FileStorageService {
             return;
         }
         throw new ApiException(ErrorCode.ACCESS_DENIED, "Bạn không có quyền đính kèm file cho đối tượng này");
+    }
+
+    private void assertMutableServiceResultOwner(FileOwnerType ownerType, Long ownerId) {
+        if (ownerType != FileOwnerType.SERVICE_RESULT) {
+            return;
+        }
+
+        ServiceResult serviceResult = serviceResultRepository.findById(ownerId)
+                .orElseThrow(() -> new ApiException(ErrorCode.SERVICE_RESULT_NOT_FOUND));
+
+        if (serviceResult.getStatus() == ServiceResultStatus.VERIFIED) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, VERIFIED_SERVICE_RESULT_EDIT_MESSAGE);
+        }
     }
 
     private boolean hasElevatedInternalAccess(User requester) {

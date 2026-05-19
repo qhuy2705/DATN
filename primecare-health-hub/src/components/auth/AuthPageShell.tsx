@@ -6,10 +6,10 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 
 export const authInputClassName =
-  'h-12 rounded-2xl border-border/70 bg-background px-4 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-200 placeholder:text-muted-foreground/90 focus-visible:border-primary/45 focus-visible:ring-[3px] focus-visible:ring-primary/12 focus-visible:ring-offset-0';
+  'h-12 rounded-2xl border-border/70 bg-background px-4 text-sm text-foreground shadow-sm transition-[border-color,box-shadow,background-color] duration-200 placeholder:text-muted-foreground/90 focus-visible:border-primary/45 focus-visible:ring-[3px] focus-visible:ring-primary/12 focus-visible:ring-offset-0';
 
 export const authSelectClassName =
-  'h-12 w-full appearance-none rounded-2xl border border-border/70 bg-background px-4 pr-12 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-200 focus:border-primary/45 focus:outline-none focus:ring-[3px] focus:ring-primary/12';
+  'h-12 w-full appearance-none rounded-2xl border border-border/70 bg-background px-4 pr-12 text-sm text-foreground shadow-sm transition-[border-color,box-shadow,background-color] duration-200 focus:border-primary/45 focus:outline-none focus:ring-[3px] focus:ring-primary/12';
 
 export const authToggleButtonClassName =
   'absolute right-3 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors duration-200 hover:bg-primary/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 focus-visible:ring-offset-2';

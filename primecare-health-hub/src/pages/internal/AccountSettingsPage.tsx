@@ -13,7 +13,6 @@ import { useChangePassword } from '@/hooks/use-auth';
 import { toast } from 'sonner';
 
 const defaultDoctorForm = {
-  fullName: '',
   displayTitleVn: '',
   displayTitleEn: '',
   bioVn: '',
@@ -24,7 +23,6 @@ const defaultDoctorForm = {
   educationEn: '',
   achievementsVn: '',
   achievementsEn: '',
-  yearsExp: 0,
   avatarUrl: '',
 };
 
@@ -45,18 +43,16 @@ export default function AccountSettingsPage() {
   useEffect(() => {
     if (!doctorProfile) return;
     setDoctorForm({
-      fullName: doctorProfile.fullName || '',
-      displayTitleVn: doctorProfile.title || '',
-      displayTitleEn: doctorProfile.title || '',
-      bioVn: doctorProfile.bio || '',
-      bioEn: doctorProfile.bio || '',
-      expertiseVn: doctorProfile.expertise || '',
-      expertiseEn: doctorProfile.expertise || '',
-      educationVn: doctorProfile.education || '',
-      educationEn: doctorProfile.education || '',
-      achievementsVn: doctorProfile.achievements || '',
-      achievementsEn: doctorProfile.achievements || '',
-      yearsExp: Number(doctorProfile.yearsOfExperience || 0),
+      displayTitleVn: doctorProfile.displayTitleVn || '',
+      displayTitleEn: doctorProfile.displayTitleEn || '',
+      bioVn: doctorProfile.bioVn || '',
+      bioEn: doctorProfile.bioEn || '',
+      expertiseVn: doctorProfile.expertiseVn || '',
+      expertiseEn: doctorProfile.expertiseEn || '',
+      educationVn: doctorProfile.educationVn || '',
+      educationEn: doctorProfile.educationEn || '',
+      achievementsVn: doctorProfile.achievementsVn || '',
+      achievementsEn: doctorProfile.achievementsEn || '',
       avatarUrl: doctorProfile.avatarUrl || '',
     });
   }, [doctorProfile]);
@@ -64,8 +60,10 @@ export default function AccountSettingsPage() {
   const doctorSummary = useMemo(() => {
     if (!doctorProfile) return [];
     return [
+      { label: 'Họ tên chính thức', value: doctorProfile.fullName || '-' },
       { label: 'Chi nhánh', value: doctorProfile.branchName || '-' },
       { label: 'Chuyên khoa', value: doctorProfile.specialtyName || '-' },
+      { label: 'Số năm kinh nghiệm', value: `${Number(doctorProfile.yearsOfExperience || 0)} năm` },
       { label: 'Trạng thái vận hành', value: doctorProfile.effectiveStatus || doctorProfile.status || '-' },
       { label: 'Tài khoản', value: doctorProfile.accountStatus || 'Chưa có tài khoản' },
     ];
@@ -116,17 +114,6 @@ export default function AccountSettingsPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium">Họ tên</label>
-                      <Input value={doctorForm.fullName} onChange={(e) => setDoctorForm((prev) => ({ ...prev, fullName: e.target.value }))} />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium">Số năm kinh nghiệm</label>
-                      <Input type="number" value={doctorForm.yearsExp} onChange={(e) => setDoctorForm((prev) => ({ ...prev, yearsExp: Number(e.target.value) }))} />
-                    </div>
-                  </div>
-
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div>
                       <label className="mb-1.5 block text-sm font-medium">Chức danh VN</label>

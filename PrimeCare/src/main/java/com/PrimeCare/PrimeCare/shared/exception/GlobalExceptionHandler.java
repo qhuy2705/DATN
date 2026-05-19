@@ -27,6 +27,8 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -316,6 +318,19 @@ public class GlobalExceptionHandler {
                 "Header Accept không được hỗ trợ",
                 req,
                 details
+        );
+    }
+
+    @ExceptionHandler({NoHandlerFoundException.class, NoResourceFoundException.class})
+    public ResponseEntity<ApiError> handleNotFound(Exception ex, HttpServletRequest req) {
+        log.warn("No API handler found at path={}", req.getRequestURI());
+
+        return buildError(
+                HttpStatus.NOT_FOUND,
+                "NOT_FOUND",
+                "Không tìm thấy API",
+                req,
+                null
         );
     }
 

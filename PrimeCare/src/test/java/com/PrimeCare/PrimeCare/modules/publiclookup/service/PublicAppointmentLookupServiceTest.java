@@ -7,6 +7,7 @@ import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentCheckInTok
 import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentQueueService;
 import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentSelfServiceCancellationPolicy;
 import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentStatusHistoryService;
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.file.service.FileStorageService;
 import com.PrimeCare.PrimeCare.modules.notification.repository.AppointmentPdfJobRepository;
 import com.PrimeCare.PrimeCare.modules.notification.service.AppointmentPdfService;
@@ -78,6 +79,8 @@ class PublicAppointmentLookupServiceTest {
     private RealtimeEventPublisher realtimeEventPublisher;
     @Mock
     private PasswordEncoder passwordEncoder;
+    @Mock
+    private AuditLogService auditLogService;
 
     @InjectMocks
     private PublicAppointmentLookupService service;

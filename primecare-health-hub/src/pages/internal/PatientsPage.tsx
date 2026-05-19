@@ -115,9 +115,25 @@ export default function PatientsPage() {
   };
 
   const submit = async () => {
+    const preservedFields = editing
+      ? {
+          avatarUrl: editing.avatarUrl,
+          identityNumber: editing.identityNumber,
+          insuranceNumber: editing.insuranceNumber,
+          emergencyContactName: editing.emergencyContactName,
+          emergencyContactPhone: editing.emergencyContactPhone,
+          allergyNote: editing.allergyNote,
+          chronicDiseaseNote: editing.chronicDiseaseNote,
+          note: editing.note,
+        }
+      : {};
+
     await savePatient.mutateAsync({
       id: editing?.id,
-      body: form,
+      body: {
+        ...preservedFields,
+        ...form,
+      },
     });
     setOpen(false);
   };
@@ -196,7 +212,7 @@ export default function PatientsPage() {
                     variant="outline"
                     size="icon"
                     onClick={() => setAllergyPatientId(r.id)}
-                    className="h-9 w-9 rounded-xl border-border/70 bg-amber-50 hover:bg-amber-100 text-amber-600"
+                    className="h-9 w-9 rounded-xl border-warning/20 bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"/><path d="m8.5 8.5 7 7"/></svg>
                   </Button>
@@ -209,7 +225,7 @@ export default function PatientsPage() {
                     variant="outline"
                     size="icon"
                     onClick={() => setTimelinePatient(r as Patient)}
-                    className="h-9 w-9 rounded-xl border-border/70 bg-indigo-50 hover:bg-indigo-100 text-indigo-600"
+                    className="h-9 w-9 rounded-xl border-primary/20 bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
                   </Button>

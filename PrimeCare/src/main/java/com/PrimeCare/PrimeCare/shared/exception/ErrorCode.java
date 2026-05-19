@@ -17,6 +17,14 @@ public enum ErrorCode {
     PUBLIC_LOOKUP_OTP_LOCKED(HttpStatus.TOO_MANY_REQUESTS, "Mã OTP đã bị khóa do nhập sai quá nhiều lần. Vui lòng gửi lại mã mới."),
     PUBLIC_LOOKUP_TOKEN_INVALID(HttpStatus.BAD_REQUEST, "Token tra cứu không hợp lệ."),
     PUBLIC_LOOKUP_TOKEN_EXPIRED(HttpStatus.BAD_REQUEST, "Token tra cứu đã hết hạn."),
+    BOOKING_EMAIL_VERIFICATION_REQUIRED(HttpStatus.BAD_REQUEST, "Vui lòng xác thực email trước khi đặt lịch."),
+    BOOKING_EMAIL_OTP_INVALID(HttpStatus.BAD_REQUEST, "Mã OTP xác thực email không đúng. Vui lòng kiểm tra lại."),
+    BOOKING_EMAIL_OTP_EXPIRED(HttpStatus.BAD_REQUEST, "Mã OTP xác thực email đã hết hạn. Vui lòng gửi lại mã mới."),
+    BOOKING_EMAIL_OTP_LOCKED(HttpStatus.TOO_MANY_REQUESTS, "Mã OTP xác thực email đã bị khóa do nhập sai quá nhiều lần. Vui lòng gửi lại mã mới."),
+    BOOKING_EMAIL_TOKEN_INVALID(HttpStatus.BAD_REQUEST, "Token xác thực email đặt lịch không hợp lệ."),
+    BOOKING_EMAIL_TOKEN_EXPIRED(HttpStatus.BAD_REQUEST, "Token xác thực email đặt lịch đã hết hạn. Vui lòng xác thực lại email."),
+    APPOINTMENT_RESPONSE_TOKEN_INVALID(HttpStatus.BAD_REQUEST, "Liên kết phản hồi lịch hẹn không hợp lệ."),
+    APPOINTMENT_RESPONSE_TOKEN_EXPIRED(HttpStatus.BAD_REQUEST, "Liên kết phản hồi lịch hẹn đã hết hạn."),
     AUTH_EMAIL_EXISTS(HttpStatus.CONFLICT, "Email đã tồn tại"),
     AUTH_PHONE_EXISTS(HttpStatus.CONFLICT, "Số điện thoại đã tồn tại"),
     AUTH_SETUP_TOKEN_INVALID(HttpStatus.BAD_REQUEST, "Liên kết thiết lập mật khẩu không hợp lệ"),
@@ -49,6 +57,14 @@ public enum ErrorCode {
     APPOINTMENT_CHECKIN_TOKEN_EXPIRED(HttpStatus.BAD_REQUEST, "Mã QR check-in đã hết hạn."),
     APPOINTMENT_INVALID_STATUS(HttpStatus.BAD_REQUEST, "Trạng thái lịch hẹn không hợp lệ"),
     APPOINTMENT_TOO_EARLY_FOR_NO_SHOW(HttpStatus.BAD_REQUEST, "Chưa đủ thời gian để đánh dấu bệnh nhân không đến"),
+    BOOKING_REQUIRES_STAFF_ASSISTANCE(
+            HttpStatus.FORBIDDEN,
+            "Yêu cầu đặt lịch này cần được phòng khám hỗ trợ xác nhận trực tiếp. Vui lòng liên hệ nhân viên để được hỗ trợ đặt lịch."
+    ),
+    BOOKING_ACTIVE_LIMIT_EXCEEDED(
+            HttpStatus.CONFLICT,
+            "Bạn đã có lịch hẹn đang hoạt động gần thời gian này. Vui lòng liên hệ nhân viên nếu cần hỗ trợ đặt thêm lịch."
+    ),
 
     PATIENT_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy bệnh nhân"),
     PATIENT_CODE_EXISTS(HttpStatus.CONFLICT, "Mã bệnh nhân đã tồn tại"),

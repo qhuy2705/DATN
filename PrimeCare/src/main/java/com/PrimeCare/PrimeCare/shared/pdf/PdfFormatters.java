@@ -164,6 +164,7 @@ public final class PdfFormatters {
             case PENDING_CONFIRMATION -> "Chờ xác nhận thanh toán";
             case PAYMENT_REVIEW -> "Đang đối soát";
             case PAID -> "Đã thanh toán";
+            case PARTIALLY_REFUNDED -> "Đã hoàn tiền một phần";
             case REFUNDED -> "Đã hoàn tiền";
             case VOID -> "Đã hủy";
         };

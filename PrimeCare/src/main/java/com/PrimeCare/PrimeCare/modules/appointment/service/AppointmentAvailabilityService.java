@@ -6,7 +6,9 @@ import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AppointmentAvail
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AvailabilityPreviewResponse;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.BookableSlotResponse;
 import com.PrimeCare.PrimeCare.modules.appointment.entity.Appointment;
+import com.PrimeCare.PrimeCare.modules.appointment.entity.AppointmentSlotHold;
 import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentRepository;
+import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentSlotHoldRepository;
 import com.PrimeCare.PrimeCare.modules.doctor_leave.entity.DoctorLeaveRequest;
 import com.PrimeCare.PrimeCare.modules.doctor_leave.repository.DoctorLeaveRequestRepository;
 import com.PrimeCare.PrimeCare.modules.doctor_schedule.repository.DoctorWorkScheduleRepository;
@@ -29,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -60,6 +63,7 @@ public class AppointmentAvailabilityService {
     private final DoctorWorkScheduleRepository doctorWorkScheduleRepository;
     private final DoctorLeaveRequestRepository doctorLeaveRequestRepository;
     private final AppointmentRepository appointmentRepository;
+    private final AppointmentSlotHoldRepository appointmentSlotHoldRepository;
     private final BranchSpecialtyService branchSpecialtyService;
     private final DoctorOperationalGuardService doctorOperationalGuardService;
     private final Cache<AvailabilityCacheKey, AppointmentAvailabilityResponse> availabilityCache = Caffeine.newBuilder()
@@ -87,7 +91,7 @@ public class AppointmentAvailabilityService {
             BranchSessionType session,
             boolean onlyAvailable
     ) {
-        return buildAvailability(branchId, specialtyId, doctorId, visitDate, session, onlyAvailable, null, "public availability");
+        return buildAvailability(branchId, specialtyId, doctorId, visitDate, session, onlyAvailable, null, "public availability", true);
     }
 
     @Transactional(readOnly = true)
@@ -100,7 +104,7 @@ public class AppointmentAvailabilityService {
             boolean onlyAvailable,
             Long excludedAppointmentId
     ) {
-        return buildAvailability(branchId, specialtyId, doctorId, visitDate, session, onlyAvailable, excludedAppointmentId, "reschedule availability");
+        return buildAvailability(branchId, specialtyId, doctorId, visitDate, session, onlyAvailable, excludedAppointmentId, "reschedule availability", false);
     }
 
     private AppointmentAvailabilityResponse buildAvailability(
@@ -111,28 +115,30 @@ public class AppointmentAvailabilityService {
             BranchSessionType session,
             boolean onlyAvailable,
             Long excludedAppointmentId,
-            String operation
+            String operation,
+            boolean publicSafeDoctorErrors
     ) {
         long started = System.nanoTime();
         AvailabilityCacheKey cacheKey = new AvailabilityCacheKey(branchId, specialtyId, doctorId, visitDate, session, onlyAvailable);
         boolean cacheable = excludedAppointmentId == null;
-        if (cacheable) {
-            AppointmentAvailabilityResponse cached = getCachedAvailability(cacheKey);
-            if (cached != null) {
-                logAvailabilityDuration(operation + " cache_hit", started, branchId, specialtyId, doctorId, visitDate, session, cached.getSlots().size());
-                return cached;
-            }
-        }
 
         BranchSpecialty branchSpecialty = branchSpecialtyService.getActiveBranchSpecialtyEntity(branchId, specialtyId);
 
         DoctorProfile doctor = doctorProfileRepository.findByIdAndBranch_Id(doctorId, branchId)
                                                       .orElseThrow(() -> new ApiException(ErrorCode.DOCTOR_NOT_FOUND));
 
-        doctorOperationalGuardService.assertDoctorBookable(doctor);
+        assertDoctorBookable(doctor, publicSafeDoctorErrors);
 
         if (!doctorProfileRepository.existsDoctorSpecialty(doctorId, specialtyId)) {
             throw new ApiException(ErrorCode.DOCTOR_NOT_IN_SPECIALTY, "Bác sĩ không thuộc chuyên khoa đã chọn");
+        }
+
+        if (cacheable) {
+            AppointmentAvailabilityResponse cached = getCachedAvailability(cacheKey);
+            if (cached != null) {
+                logAvailabilityDuration(operation + " cache_hit", started, branchId, specialtyId, doctorId, visitDate, session, cached.getSlots().size());
+                return cached;
+            }
         }
 
         BranchSession branchSession = branchSessionRepository
@@ -179,8 +185,15 @@ public class AppointmentAvailabilityService {
                                    .filter(appointment -> !excludedAppointmentId.equals(appointment.getId()))
                                    .toList();
         }
+        List<AppointmentSlotHold> activeHolds = appointmentSlotHoldRepository.findActiveByDoctorAndDateRange(
+                doctorId,
+                visitDate,
+                visitDate,
+                AppointmentSlotAvailabilityGuard.BLOCKING_HOLD_STATUSES,
+                LocalDateTime.now()
+        );
 
-        List<BookableSlotResponse> slots = buildSlots(branchSession, visitDate, slotMinutes, slotCapacity, candidates, onlyAvailable);
+        List<BookableSlotResponse> slots = buildSlots(branchSession, visitDate, slotMinutes, slotCapacity, candidates, activeHolds, onlyAvailable);
 
         int bookedSlots = (int) slots.stream().filter(slot -> !slot.isAvailable()).count();
         int remainingSlots = slots.stream().mapToInt(BookableSlotResponse::getRemainingSlots).sum();
@@ -235,7 +248,7 @@ public class AppointmentAvailabilityService {
         DoctorProfile doctor = doctorProfileRepository.findByIdAndBranch_Id(doctorId, branchId)
                                                       .orElseThrow(() -> new ApiException(ErrorCode.DOCTOR_NOT_FOUND));
 
-        doctorOperationalGuardService.assertDoctorBookable(doctor);
+        doctorOperationalGuardService.assertDoctorPublicBookable(doctor);
 
         if (!doctorProfileRepository.existsDoctorSpecialty(doctorId, specialtyId)) {
             throw new ApiException(ErrorCode.DOCTOR_NOT_IN_SPECIALTY, "Bác sĩ không thuộc chuyên khoa đã chọn");
@@ -271,6 +284,16 @@ public class AppointmentAvailabilityService {
         ).forEach(appointment -> appointmentsByGroup
                 .computeIfAbsent(new AvailabilityKey(appointment.getVisitDate(), appointment.getSession()), ignored -> new ArrayList<>())
                 .add(appointment));
+        Map<AvailabilityKey, List<AppointmentSlotHold>> holdsByGroup = new LinkedHashMap<>();
+        appointmentSlotHoldRepository.findActiveByDoctorAndDateRange(
+                doctorId,
+                fromDate,
+                toDate,
+                AppointmentSlotAvailabilityGuard.BLOCKING_HOLD_STATUSES,
+                LocalDateTime.now()
+        ).forEach(hold -> holdsByGroup
+                .computeIfAbsent(new AvailabilityKey(hold.getVisitDate(), hold.getSession()), ignored -> new ArrayList<>())
+                .add(hold));
 
         int slotMinutes = resolveSlotMinutes(branchSpecialty);
         List<AvailabilityPreviewResponse.DayPreview> dayPreviews = new ArrayList<>();
@@ -289,6 +312,7 @@ public class AppointmentAvailabilityService {
                             slotMinutes,
                             resolveSlotCapacity(branchSession),
                             appointmentsByGroup.getOrDefault(key, List.of()),
+                            holdsByGroup.getOrDefault(key, List.of()),
                             true
                     );
                 }
@@ -341,15 +365,30 @@ public class AppointmentAvailabilityService {
                                         .count();
     }
 
+    private void assertDoctorBookable(DoctorProfile doctor, boolean publicSafeDoctorErrors) {
+        if (publicSafeDoctorErrors) {
+            doctorOperationalGuardService.assertDoctorPublicBookable(doctor);
+            return;
+        }
+        doctorOperationalGuardService.assertDoctorBookable(doctor);
+    }
+
     private List<BookableSlotResponse> buildSlots(
             BranchSession branchSession,
             LocalDate visitDate,
             int slotMinutes,
             int slotCapacity,
             List<Appointment> candidates,
+            List<AppointmentSlotHold> activeHolds,
             boolean onlyAvailable
     ) {
-        List<AppointmentInterval> intervals = toIntervals(candidates);
+        List<AppointmentInterval> intervals = new ArrayList<>();
+        intervals.addAll(toIntervals(candidates));
+        intervals.addAll(toHoldIntervals(activeHolds));
+        intervals = intervals.stream()
+                             .sorted(Comparator.comparing(AppointmentInterval::start)
+                                               .thenComparing(AppointmentInterval::end))
+                             .toList();
         List<BookableSlotResponse> slots = new ArrayList<>();
         LocalTime cursor = branchSession.getStartTime();
         int firstPossibleOverlapIndex = 0;
@@ -411,6 +450,18 @@ public class AppointmentAvailabilityService {
                            .sorted(Comparator.comparing(AppointmentInterval::start)
                                              .thenComparing(AppointmentInterval::end))
                            .toList();
+    }
+
+    private List<AppointmentInterval> toHoldIntervals(List<AppointmentSlotHold> holds) {
+        if (holds == null || holds.isEmpty()) {
+            return List.of();
+        }
+        return holds.stream()
+                    .filter(hold -> hold.getSlotStart() != null
+                            && hold.getSlotEnd() != null
+                            && hold.getSlotEnd().isAfter(hold.getSlotStart()))
+                    .map(hold -> new AppointmentInterval(hold.getSlotStart(), hold.getSlotEnd()))
+                    .toList();
     }
 
     private AppointmentInterval toInterval(Appointment appointment) {

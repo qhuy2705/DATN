@@ -12,6 +12,7 @@ export interface FilterConfig {
   options: FilterOption[];
   value: string;
   onChange: (v: string) => void;
+  allLabel?: string;
 }
 
 interface FilterBarProps {
@@ -31,7 +32,7 @@ export function FilterBar({ filters }: FilterBarProps) {
               <SelectValue placeholder={`${f.label}: ${t('common.all')}`} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="__all__">{t('common.all')}</SelectItem>
+              <SelectItem value="__all__">{f.allLabel ?? t('common.all')}</SelectItem>
               {f.options.map((o) => (
                 <SelectItem key={o.value} value={o.value}>
                   {o.label}

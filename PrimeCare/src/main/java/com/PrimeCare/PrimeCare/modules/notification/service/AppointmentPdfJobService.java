@@ -69,7 +69,7 @@ public class AppointmentPdfJobService {
                         InternalNotificationService.SEVERITY_CRITICAL,
                         "Tạo PDF phiếu hẹn thất bại",
                         "Không thể đưa lịch hẹn " + appointment.getCode() + " vào hàng đợi tạo PDF.",
-                        "/app/admin/notifications",
+                        "/app/admin/dashboard",
                         "APPOINTMENT",
                         appointment.getId(),
                         java.util.Map.of("appointmentCode", appointment.getCode(), "error", ex.getMessage() != null ? ex.getMessage() : "")

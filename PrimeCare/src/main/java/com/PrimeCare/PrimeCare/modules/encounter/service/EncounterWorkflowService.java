@@ -78,10 +78,12 @@ public class EncounterWorkflowService {
                 && !hasPendingPayment
                 && !hasWaitingResults
                 && completedResultItemCount > 0;
-        boolean canCreatePrescription = !terminal
+        boolean baseClinicalAllowed = !terminal
                 && !hasPendingPayment
                 && !hasWaitingResults;
-        boolean canComplete = canCreatePrescription
+        boolean canCreatePrescription = baseClinicalAllowed
+                && issuedPrescriptionCount == 0;
+        boolean canComplete = baseClinicalAllowed
                 && StringUtil.trimToNull(encounter.getFinalDiagnosis()) != null
                 && StringUtil.trimToNull(encounter.getConclusion()) != null;
 
@@ -204,10 +206,12 @@ public class EncounterWorkflowService {
                 && !hasPendingPayment
                 && !hasWaitingResults
                 && completedResultItemCount > 0;
-        boolean canCreatePrescription = !terminal
+        boolean baseClinicalAllowed = !terminal
                 && !hasPendingPayment
                 && !hasWaitingResults;
-        boolean canComplete = canCreatePrescription
+        boolean canCreatePrescription = baseClinicalAllowed
+                && issuedPrescriptionCount == 0;
+        boolean canComplete = baseClinicalAllowed
                 && StringUtil.trimToNull(encounter.getFinalDiagnosis()) != null
                 && StringUtil.trimToNull(encounter.getConclusion()) != null;
 

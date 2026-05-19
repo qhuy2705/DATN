@@ -6,6 +6,13 @@ import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AppointmentRespo
 import com.PrimeCare.PrimeCare.modules.appointment.entity.Appointment;
 import com.PrimeCare.PrimeCare.modules.appointment.event.AppointmentCreatedSpringEvent;
 import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentRepository;
+import com.PrimeCare.PrimeCare.modules.auth.entity.User;
+import com.PrimeCare.PrimeCare.modules.auth.repository.UserRepository;
+import com.PrimeCare.PrimeCare.modules.bookingemailotp.service.BookingEmailOtpService;
+import com.PrimeCare.PrimeCare.modules.bookingemailotp.service.BookingEmailOtpService.VerifiedBookingEmailToken;
+import com.PrimeCare.PrimeCare.modules.booking_restriction.service.BookingIdentity;
+import com.PrimeCare.PrimeCare.modules.booking_restriction.service.BookingIdentityService;
+import com.PrimeCare.PrimeCare.modules.booking_restriction.service.BookingRestrictionPolicyService;
 import com.PrimeCare.PrimeCare.modules.doctor_schedule.entity.DoctorWorkSchedule;
 import com.PrimeCare.PrimeCare.modules.doctor_schedule.repository.DoctorWorkScheduleRepository;
 import com.PrimeCare.PrimeCare.modules.masterdata.branch.entity.Branch;
@@ -20,6 +27,11 @@ import com.PrimeCare.PrimeCare.modules.patient.entity.Patient;
 import com.PrimeCare.PrimeCare.modules.patient.service.PatientService;
 import com.PrimeCare.PrimeCare.modules.masterdata.specialty.repository.SpecialtyRepository;
 import com.PrimeCare.PrimeCare.modules.masterdata.specialty.service.BranchSpecialtyService;
+import com.PrimeCare.PrimeCare.modules.triage.PreTriageResult;
+import com.PrimeCare.PrimeCare.modules.triage.PreTriageService;
+import com.PrimeCare.PrimeCare.modules.triage.TriageAuditService;
+import com.PrimeCare.PrimeCare.modules.triage.TriageJsonSupport;
+import com.PrimeCare.PrimeCare.modules.triage.TriagePriorityNormalizer;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentSourceType;
 import com.PrimeCare.PrimeCare.shared.enums.ArrivalStatus;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentStatus;
@@ -28,10 +40,14 @@ import com.PrimeCare.PrimeCare.shared.exception.ErrorCode;
 import com.PrimeCare.PrimeCare.shared.utils.StringUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
@@ -48,6 +64,7 @@ public class AppointmentService {
 
     private final AppointmentRepository appointmentRepository;
     private final AppointmentAvailabilityService availabilityService;
+    private final AppointmentSlotAvailabilityGuard slotAvailabilityGuard;
     private final BranchRepository branchRepository;
     private final SpecialtyRepository specialtyRepository;
     private final DoctorProfileRepository doctorProfileRepository;
@@ -58,9 +75,24 @@ public class AppointmentService {
     private final PatientService patientService;
     private final DoctorOperationalGuardService doctorOperationalGuardService;
     private final ApplicationEventPublisher applicationEventPublisher;
+    private final PreTriageService preTriageService;
+    private final TriageAuditService triageAuditService;
+    private final BookingIdentityService bookingIdentityService;
+    private final BookingRestrictionPolicyService bookingRestrictionPolicyService;
+    private final BookingEmailOtpService bookingEmailOtpService;
+    private final UserRepository userRepository;
 
     @Transactional
     public AppointmentResponse create(CreateAppointmentRequest request) {
+        return createInternal(request, resolveAuthenticatedUserIdFromContext());
+    }
+
+    @Transactional
+    public AppointmentResponse create(CreateAppointmentRequest request, Long currentUserId) {
+        return createInternal(request, currentUserId);
+    }
+
+    private AppointmentResponse createInternal(CreateAppointmentRequest request, Long currentUserId) {
         if (request.getVisitDate().isBefore(LocalDate.now())) {
             throw new ApiException(ErrorCode.APPOINTMENT_INVALID_DATE);
         }
@@ -79,7 +111,7 @@ public class AppointmentService {
 
         branchSpecialtyService.validateBranchSpecialtyActive(request.getBranchId(), request.getSpecialtyId());
 
-        doctorOperationalGuardService.assertDoctorBookable(doctor);
+        doctorOperationalGuardService.assertDoctorPublicBookable(doctor);
 
         if (!doctorProfileRepository.existsDoctorSpecialty(doctor.getId(), specialty.getId())) {
             throw new ApiException(ErrorCode.SPECIALTY_NOT_FOUND, "Bác sĩ không thuộc chuyên khoa đã chọn");
@@ -148,6 +180,16 @@ public class AppointmentService {
             );
         }
 
+        slotAvailabilityGuard.assertSlotAvailable(
+                doctor.getId(),
+                request.getVisitDate(),
+                request.getSession(),
+                selectedSlot.getStartTime(),
+                selectedSlot.getEndTime(),
+                null,
+                null
+        );
+
         if (request.getPatientDob() == null) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Ngày sinh không được để trống");
         }
@@ -157,11 +199,35 @@ public class AppointmentService {
         if (StringUtil.trimToNull(request.getVisitType()) == null) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR, "Loại lượt khám không được để trống");
         }
+        if (StringUtil.trimToNull(request.getPatientEmail()) == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Vui lòng nhập email để nhận mã OTP tra cứu/hủy lịch.");
+        }
+        String patientEmail = bookingEmailOtpService.normalizeEmail(request.getPatientEmail());
+        User currentUser = resolveCurrentUser(currentUserId);
+        VerifiedBookingEmailToken bookingEmailVerification = resolveBookingEmailVerification(
+                request,
+                currentUser,
+                patientEmail
+        );
+
+        BookingIdentity bookingIdentity = bookingIdentityService.resolvePublicIdentity(
+                request.getPatientPhone(),
+                request.getPatientFullName(),
+                request.getPatientDob(),
+                patientEmail
+        );
+        bookingRestrictionPolicyService.assertPublicBookingAllowed(
+                bookingIdentity,
+                request.getVisitDate(),
+                doctor.getId(),
+                request.getSession(),
+                request.getSlotStart()
+        );
 
         Patient patient = patientService.findOrCreateFromAppointmentData(
                 request.getPatientFullName(),
                 request.getPatientPhone(),
-                request.getPatientEmail(),
+                patientEmail,
                 request.getPatientDob(),
                 request.getPatientGender(),
                 request.getPatientNote()
@@ -204,7 +270,7 @@ public class AppointmentService {
                                         .arrivalStatus(ArrivalStatus.NOT_ARRIVED)
                                         .patientFullName(request.getPatientFullName().trim())
                                         .patientPhone(request.getPatientPhone().trim())
-                                        .patientEmail(StringUtil.trimToNull(request.getPatientEmail()))
+                                        .patientEmail(patientEmail)
                                         .patient(patient)
                                         .patientDob(request.getPatientDob())
                                         .patientGender(request.getPatientGender())
@@ -213,7 +279,11 @@ public class AppointmentService {
                                         .visitType(StringUtil.trimToNull(request.getVisitType()) != null ? request.getVisitType().trim().toUpperCase().replace(' ', '_') : null)
                                         .build();
 
+        PreTriageResult preTriageResult = applyPreTriage(entity, request);
+
         Appointment saved = appointmentRepository.save(entity);
+        triageAuditService.recordPreTriageSuggested(saved, preTriageResult, request.getPreTriage());
+        consumeBookingEmailVerification(bookingEmailVerification, currentUser, patientEmail);
         availabilityService.evictAvailabilityCacheForDoctorDateSession(
                 saved.getDoctor().getId(),
                 saved.getVisitDate(),
@@ -228,6 +298,79 @@ public class AppointmentService {
         ));
 
         return toResponse(saved);
+    }
+
+    private VerifiedBookingEmailToken resolveBookingEmailVerification(
+            CreateAppointmentRequest request,
+            User currentUser,
+            String patientEmail
+    ) {
+        if (!requiresBookingEmailVerification(currentUser, patientEmail)) {
+            return null;
+        }
+        return bookingEmailOtpService.validateTokenForBooking(
+                request.getBookingEmailVerificationToken(),
+                patientEmail
+        );
+    }
+
+    private boolean requiresBookingEmailVerification(User currentUser, String patientEmail) {
+        if (currentUser == null) {
+            return true;
+        }
+        String accountEmail = normalizeEmailOrNull(currentUser.getEmail());
+        return currentUser.getEmailVerifiedAt() == null
+                || accountEmail == null
+                || !accountEmail.equals(patientEmail);
+    }
+
+    private void consumeBookingEmailVerification(
+            VerifiedBookingEmailToken bookingEmailVerification,
+            User currentUser,
+            String patientEmail
+    ) {
+        if (bookingEmailVerification == null) {
+            return;
+        }
+        bookingEmailOtpService.consumeForBooking(bookingEmailVerification);
+        markAccountEmailVerifiedIfMatches(currentUser, patientEmail);
+    }
+
+    private void markAccountEmailVerifiedIfMatches(User currentUser, String patientEmail) {
+        if (currentUser == null || currentUser.getEmailVerifiedAt() != null) {
+            return;
+        }
+        String accountEmail = normalizeEmailOrNull(currentUser.getEmail());
+        if (accountEmail != null && accountEmail.equals(patientEmail)) {
+            currentUser.setEmailVerifiedAt(LocalDateTime.now());
+            userRepository.save(currentUser);
+        }
+    }
+
+    private User resolveCurrentUser(Long currentUserId) {
+        if (currentUserId == null) {
+            return null;
+        }
+        return userRepository.findById(currentUserId).orElse(null);
+    }
+
+    private Long resolveAuthenticatedUserIdFromContext() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null
+                || !authentication.isAuthenticated()
+                || authentication instanceof AnonymousAuthenticationToken) {
+            return null;
+        }
+        try {
+            return Long.valueOf(authentication.getName());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private String normalizeEmailOrNull(String email) {
+        String trimmed = StringUtil.trimToNull(email);
+        return trimmed != null ? trimmed.toLowerCase(Locale.ROOT) : null;
     }
 
     private boolean hasSamePatientSameSlotBooking(
@@ -270,6 +413,43 @@ public class AppointmentService {
     private String normalizePatientName(String value) {
         String trimmed = StringUtil.trimToNull(value);
         return trimmed != null ? trimmed.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ") : null;
+    }
+
+    private PreTriageResult applyPreTriage(Appointment entity, CreateAppointmentRequest request) {
+        var input = request.getPreTriage();
+        PreTriageResult result = preTriageService.assess(
+                request.getReasonForVisit(),
+                request.getPatientNote(),
+                input,
+                request.getPatientDob(),
+                request.getPatientGender()
+        );
+
+        entity.setSymptomOnset(TriagePriorityNormalizer.normalizeSymptomOnset(input != null ? input.getSymptomOnset() : null));
+        entity.setChronicConditionsJson(TriageJsonSupport.writeStringList(
+                input != null ? TriagePriorityNormalizer.normalizeChronicConditions(input.getChronicConditions()) : List.of()
+        ));
+        entity.setChronicConditionOthersJson(TriageJsonSupport.writeStringList(
+                input != null ? TriagePriorityNormalizer.normalizeChronicConditionOthers(input.getChronicConditionOthers()) : List.of()
+        ));
+        entity.setFunctionalImpact(TriagePriorityNormalizer.normalizeFunctionalImpact(input != null ? input.getFunctionalImpact() : null));
+        entity.setRedFlagSelectionsJson(TriageJsonSupport.writeStringList(
+                input != null ? TriagePriorityNormalizer.normalizeRedFlags(input.getRedFlags()) : List.of()
+        ));
+        entity.setPreTriageLevel(result.getLevel());
+        entity.setPreTriagePriority(result.getPriority());
+        entity.setPreTriageFlagsJson(TriageJsonSupport.writeStringList(result.getFlags()));
+        entity.setPreTriageReasonsJson(TriageJsonSupport.writeStringList(result.getReasons()));
+        entity.setPreTriageSummary(result.getSummary());
+        entity.setPreTriageAssessedAt(LocalDateTime.now());
+        entity.setPreTriageMatchedTermsJson(TriageJsonSupport.writeObject(result.getMatchedTerms()));
+        entity.setPreTriageMatchedRulesJson(TriageJsonSupport.writeObject(result.getMatchedRules()));
+        entity.setPreTriageSource(result.getSource());
+        entity.setPreTriageConfidenceLevel(result.getConfidenceLevel());
+        entity.setPreTriageKnowledgeBaseVersion(result.getKnowledgeBaseVersion());
+        entity.setPreTriageRulesetVersion(result.getRulesetVersion());
+        entity.setPreTriageAiModelVersion(result.getAiModelVersion());
+        return result;
     }
 
     private AppointmentResponse toResponse(Appointment entity) {

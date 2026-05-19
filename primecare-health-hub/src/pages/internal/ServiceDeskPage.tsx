@@ -52,6 +52,12 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { getApiErrorMessage } from '@/lib/error-utils';
 import {
+  getRefundReason,
+  getRefundedAt,
+  isRefundedOrCancelledItem,
+  SERVICE_REFUNDED_LABEL,
+} from '@/lib/refund-status';
+import {
   useServiceDeskQueue,
   useServiceDeskSummary,
   useServiceResultHistory,
@@ -317,6 +323,37 @@ const resultStatusOptions = [
   { value: 'VERIFIED', label: 'Đã xác thực nội bộ (nếu có)' },
 ];
 
+function isVerifiedServiceResult(item?: ServiceDeskQueueItem | null) {
+  return String(item?.resultStatus ?? '').toUpperCase() === 'VERIFIED';
+}
+
+function isRefundedServiceDeskItem(item?: ServiceDeskQueueItem | null) {
+  return isRefundedOrCancelledItem(item);
+}
+
+function hasServiceResult(item: ServiceDeskQueueItem) {
+  return Boolean(
+    item.resultId ||
+      item.resultStatus ||
+      item.resultTextVn ||
+      item.resultTextEn ||
+      item.resultDataJson ||
+      item.fieldValuesJson,
+  );
+}
+
+function canEditServiceResult(item?: ServiceDeskQueueItem | null) {
+  if (!item) return false;
+  if (isRefundedServiceDeskItem(item)) return false;
+  return !isVerifiedServiceResult(item);
+}
+
+function getServiceResultActionLabel(item: ServiceDeskQueueItem) {
+  if (isRefundedServiceDeskItem(item)) return SERVICE_REFUNDED_LABEL;
+  if (isVerifiedServiceResult(item)) return 'Xem kết quả';
+  return hasServiceResult(item) ? 'Cập nhật kết quả' : 'Nhập kết quả';
+}
+
 export default function ServiceDeskPage() {
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
@@ -354,7 +391,12 @@ export default function ServiceDeskPage() {
   const submitResult = useSubmitServiceResult();
 
   const items = useMemo(() => data?.items ?? [], [data?.items]);
+  const activeItems = useMemo(
+    () => items.filter((item) => !isRefundedServiceDeskItem(item)),
+    [items],
+  );
   const totalItems = data?.meta.totalItems ?? 0;
+  const selectedResultReadOnly = selectedItem ? !canEditServiceResult(selectedItem) : false;
 
 
   const boardColumns = useMemo(
@@ -363,32 +405,32 @@ export default function ServiceDeskPage() {
         id: 'waiting',
         title: 'Chờ thực hiện',
         description: 'Các mẫu mới vào queue, đang chờ kỹ thuật viên nhận xử lý.',
-        accentClassName: 'bg-slate-100 text-slate-700',
-        items: items.filter((item) => item.itemStatus === 'WAITING_EXECUTION' && !item.overdue),
+        accentClassName: 'border border-border bg-muted text-muted-foreground',
+        items: activeItems.filter((item) => item.itemStatus === 'WAITING_EXECUTION' && !item.overdue),
       },
       {
         id: 'in-progress',
         title: 'Đang thực hiện',
         description: 'Đang thao tác trên máy, đang ghi kết quả hoặc đang hoàn thiện report.',
-        accentClassName: 'bg-sky-100 text-sky-700',
-        items: items.filter((item) => item.itemStatus === 'IN_PROGRESS'),
+        accentClassName: 'border border-info/20 bg-info/10 text-info',
+        items: activeItems.filter((item) => item.itemStatus === 'IN_PROGRESS'),
       },
       {
         id: 'ready',
         title: 'Sẵn sàng trả bác sĩ',
         description: 'Đã lưu kết quả và có thể bác sĩ đọc để chốt ca khám.',
-        accentClassName: 'bg-emerald-100 text-emerald-700',
-        items: items.filter((item) => item.resultStatus === 'COMPLETED' || item.resultStatus === 'VERIFIED'),
+        accentClassName: 'border border-success/20 bg-success/10 text-success',
+        items: activeItems.filter((item) => item.resultStatus === 'COMPLETED' || item.resultStatus === 'VERIFIED'),
       },
       {
         id: 'overdue',
         title: 'Quá SLA',
         description: 'Các mẫu đang trễ hạn, nên ưu tiên xử lý hoặc escalte nội bộ.',
-        accentClassName: 'bg-amber-100 text-amber-700',
-        items: items.filter((item) => item.overdue),
+        accentClassName: 'border border-warning/20 bg-warning/10 text-warning',
+        items: activeItems.filter((item) => item.overdue),
       },
     ],
-    [items],
+    [activeItems],
   );
 
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString('vi-VN') : '—';
@@ -455,8 +497,21 @@ export default function ServiceDeskPage() {
     }
   };
 
+  const handleOpenAttachment = async (attachment: ServiceResultAttachment, index: number) => {
+    try {
+      await openProtectedFile(attachment.url, attachment.fileName || `tep-dinh-kem-${index + 1}`);
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Không thể mở tệp đính kèm'));
+    }
+  };
+
   const handleUploadFiles = async (files: FileList | null) => {
     if (!files || !selectedItem) return;
+
+    if (selectedResultReadOnly) {
+      toast.error('Kết quả đã xác nhận, chỉ có thể xem.');
+      return;
+    }
 
     if (!selectedItem.resultId) {
       toast.error('Vui lòng lưu kết quả trước để hệ thống tạo resultId rồi mới tải tệp đính kèm.');
@@ -508,49 +563,65 @@ export default function ServiceDeskPage() {
   const handleSubmit = async () => {
     if (!selectedItem) return;
 
+    if (isRefundedServiceDeskItem(selectedItem)) {
+      toast.error('Dịch vụ đã hủy/hoàn tiền, không thể nhập kết quả.');
+      void refetch();
+      return;
+    }
+
+    if (selectedResultReadOnly) {
+      toast.error('Kết quả đã xác nhận, chỉ có thể xem.');
+      void refetch();
+      return;
+    }
+
     const fieldValues = buildFieldValues(form);
     const firstAttachment = form.attachments[0];
 
-    const savedResult = await submitResult.mutateAsync({
-      itemId: selectedItem.itemId,
-      body: {
-        resultTextVn: buildQuickPreview(form) || undefined,
-        resultTextEn: form.resultTextEn.trim() || undefined,
-        resultDataJson: JSON.stringify(fieldValues),
-        fieldValuesJson: JSON.stringify(fieldValues),
-        attachmentUrl: firstAttachment?.url,
-        attachmentMimeType: firstAttachment?.mimeType,
-        attachmentUrlsJson: JSON.stringify(form.attachments),
-        conclusionText: form.conclusionText.trim() || undefined,
-        impressionText: form.impressionText.trim() || undefined,
-        templateCode: form.templateCode,
-        templateSchemaJson: form.templateSchemaJson || undefined,
-        reportTitle: form.reportTitle.trim() || getServiceLabel(selectedItem),
-      },
-    });
+    try {
+      const savedResult = await submitResult.mutateAsync({
+        itemId: selectedItem.itemId,
+        body: {
+          resultTextVn: buildQuickPreview(form) || undefined,
+          resultTextEn: form.resultTextEn.trim() || undefined,
+          resultDataJson: JSON.stringify(fieldValues),
+          fieldValuesJson: JSON.stringify(fieldValues),
+          attachmentUrl: firstAttachment?.url,
+          attachmentMimeType: firstAttachment?.mimeType,
+          attachmentUrlsJson: JSON.stringify(form.attachments),
+          conclusionText: form.conclusionText.trim() || undefined,
+          impressionText: form.impressionText.trim() || undefined,
+          templateCode: form.templateCode,
+          templateSchemaJson: form.templateSchemaJson || undefined,
+          reportTitle: form.reportTitle.trim() || getServiceLabel(selectedItem),
+        },
+      });
 
-    setSelectedItem((prev) =>
-      prev
-        ? {
-            ...prev,
-            resultId: savedResult?.id ? String(savedResult.id) : prev.resultId,
-            resultStatus: savedResult?.status || 'COMPLETED',
-            reportPdfStatus: savedResult?.reportPdfStatus || prev.reportPdfStatus,
-            reportPdfUrl: savedResult?.reportPdfUrl || prev.reportPdfUrl,
-            reportPdfErrorMessage: savedResult?.reportPdfErrorMessage || prev.reportPdfErrorMessage,
-            reportPdfGeneratedAt: savedResult?.reportPdfGeneratedAt || prev.reportPdfGeneratedAt,
-          }
-        : prev,
-    );
+      setSelectedItem((prev) =>
+        prev
+          ? {
+              ...prev,
+              resultId: savedResult?.id ? String(savedResult.id) : prev.resultId,
+              resultStatus: savedResult?.status || 'COMPLETED',
+              reportPdfStatus: savedResult?.reportPdfStatus || prev.reportPdfStatus,
+              reportPdfUrl: savedResult?.reportPdfUrl || prev.reportPdfUrl,
+              reportPdfErrorMessage: savedResult?.reportPdfErrorMessage || prev.reportPdfErrorMessage,
+              reportPdfGeneratedAt: savedResult?.reportPdfGeneratedAt || prev.reportPdfGeneratedAt,
+            }
+          : prev,
+      );
 
-    closeDialog();
+      closeDialog();
+    } catch {
+      return;
+    }
   };
 
   const renderTemplateEditor = () => {
     switch (form.templateCode) {
       case 'LAB_TABLE':
         return (
-          <div className="space-y-4">
+          <fieldset disabled={selectedResultReadOnly} className="space-y-4 border-0 p-0">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div>
                 <label className="mb-1.5 block text-sm font-medium">Mẫu bệnh phẩm</label>
@@ -590,7 +661,7 @@ export default function ServiceDeskPage() {
                     <th className="px-3 py-2 font-medium">Khoảng tham chiếu</th>
                     <th className="px-3 py-2 font-medium">Cờ</th>
                     <th className="px-3 py-2 font-medium">Ghi chú</th>
-                    <th className="w-12 px-3 py-2" />
+                    {!selectedResultReadOnly ? <th className="w-12 px-3 py-2" /> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -640,26 +711,30 @@ export default function ServiceDeskPage() {
                           placeholder="Tăng nhẹ"
                         />
                       </td>
-                      <td className="px-3 py-2">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeLabRow(index)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </td>
+                      {!selectedResultReadOnly ? (
+                        <td className="px-3 py-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeLabRow(index)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
 
-            <Button type="button" variant="outline" onClick={addLabRow}>
-              <Plus className="mr-2 h-4 w-4" />
-              Thêm dòng chỉ số
-            </Button>
+            {!selectedResultReadOnly ? (
+              <Button type="button" variant="outline" onClick={addLabRow}>
+                <Plus className="mr-2 h-4 w-4" />
+                Thêm dòng chỉ số
+              </Button>
+            ) : null}
 
             <div>
               <label className="mb-1.5 block text-sm font-medium">Kết luận kỹ thuật viên</label>
@@ -670,11 +745,11 @@ export default function ServiceDeskPage() {
                 placeholder="Nhận xét chung về bộ xét nghiệm"
               />
             </div>
-          </div>
+          </fieldset>
         );
       case 'IMAGING_REPORT':
         return (
-          <div className="space-y-4">
+          <fieldset disabled={selectedResultReadOnly} className="space-y-4 border-0 p-0">
             <div>
               <label className="mb-1.5 block text-sm font-medium">Thông tin lâm sàng</label>
               <Textarea
@@ -723,11 +798,11 @@ export default function ServiceDeskPage() {
                 placeholder="Theo dõi thêm / đối chiếu lâm sàng"
               />
             </div>
-          </div>
+          </fieldset>
         );
       case 'PROCEDURE_REPORT':
         return (
-          <div className="space-y-4">
+          <fieldset disabled={selectedResultReadOnly} className="space-y-4 border-0 p-0">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
                 <label className="mb-1.5 block text-sm font-medium">Tên thủ thuật</label>
@@ -774,12 +849,12 @@ export default function ServiceDeskPage() {
                 rows={3}
               />
             </div>
-          </div>
+          </fieldset>
         );
       case 'GENERIC_NARRATIVE':
       default:
         return (
-          <div className="space-y-4">
+          <fieldset disabled={selectedResultReadOnly} className="space-y-4 border-0 p-0">
             <div>
               <label className="mb-1.5 block text-sm font-medium">Tóm tắt kết quả</label>
               <Textarea
@@ -807,7 +882,7 @@ export default function ServiceDeskPage() {
                 rows={2}
               />
             </div>
-          </div>
+          </fieldset>
         );
     }
   };
@@ -887,6 +962,7 @@ export default function ServiceDeskPage() {
         columns={boardColumns}
         renderCard={(item) => {
           const previewText = item.resultTextVn || item.impressionText || item.conclusionText;
+          const canEdit = canEditServiceResult(item);
           return (
             <div key={item.itemId} className="rounded-2xl border bg-background p-3">
               <div className="flex items-start justify-between gap-3">
@@ -910,8 +986,8 @@ export default function ServiceDeskPage() {
                 {previewText || 'Chưa nhập kết quả. Mở phiếu để nhập đúng form dịch vụ.'}
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => openDialog(item)}>
-                  {item.resultStatus ? 'Cập nhật kết quả' : 'Nhập kết quả'}
+                <Button size="sm" variant={canEdit ? 'default' : 'outline'} onClick={() => openDialog(item)}>
+                  {getServiceResultActionLabel(item)}
                 </Button>
                 {item.reportPdfUrl ? (
                   <Button size="sm" variant="outline" onClick={() => { void handleOpenResultPdf(item); }}>
@@ -935,7 +1011,10 @@ export default function ServiceDeskPage() {
           <LoadingSkeleton variant="list" count={5} />
         ) : items.length > 0 ? (
           items.map((item) => {
-            const canEdit = true;
+            const canEdit = canEditServiceResult(item);
+            const refunded = isRefundedServiceDeskItem(item);
+            const refundReason = getRefundReason(item);
+            const refundedAt = getRefundedAt(item);
             const previewText = item.resultTextVn || item.impressionText || item.conclusionText;
             const timingText =
               typeof item.turnaroundMinutes === 'number'
@@ -967,8 +1046,22 @@ export default function ServiceDeskPage() {
                     <p className="text-xs text-muted-foreground">
                       Xếp hàng: {formatDateTime(item.queuedAt)} · Hoàn tất: {formatDateTime(item.completedAt)}
                     </p>
+                    {refunded ? (
+                      <p className="inline-flex w-fit rounded-full border border-muted-foreground/20 bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+                        {SERVICE_REFUNDED_LABEL}
+                      </p>
+                    ) : null}
+                    {refunded && (refundReason || refundedAt) ? (
+                      <p className="text-xs text-muted-foreground">
+                        {[refundReason, refundedAt ? `Lúc ${formatDateTime(refundedAt)}` : ''].filter(Boolean).join(' · ')}
+                      </p>
+                    ) : null}
                     {previewText ? (
                       <p className="line-clamp-3 max-w-3xl text-sm text-foreground">{previewText}</p>
+                    ) : refunded ? (
+                      <p className="text-sm text-muted-foreground">
+                        Mục này đã hủy/hoàn tiền, không còn là công việc cần thực hiện.
+                      </p>
                     ) : (
                       <p className="text-sm text-muted-foreground">
                         Chưa nhập kết quả. Mở phiếu để nhập đúng form dịch vụ.
@@ -1013,7 +1106,13 @@ export default function ServiceDeskPage() {
 
                 <div className="flex flex-col items-start gap-3 lg:items-end">
                   <div className="flex flex-wrap items-center gap-2">
-                    <StatusBadge status={item.itemStatus || 'WAITING_EXECUTION'} />
+                    {refunded ? (
+                      <span className="rounded-full border border-muted-foreground/20 bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+                        {SERVICE_REFUNDED_LABEL}
+                      </span>
+                    ) : (
+                      <StatusBadge status={item.itemStatus || 'WAITING_EXECUTION'} />
+                    )}
                     {item.resultStatus ? <StatusBadge status={item.resultStatus} /> : null}
                   </div>
                   {item.reportPdfStatus === 'FAILED' && item.reportPdfErrorMessage ? (
@@ -1022,13 +1121,13 @@ export default function ServiceDeskPage() {
                     </div>
                   ) : null}
                   <div className="flex flex-wrap gap-2">
-                    {canEdit ? (
-                      <Button onClick={() => openDialog(item)}>
-                        {item.resultStatus ? 'Cập nhật kết quả' : 'Nhập kết quả'}
-                      </Button>
+                    {refunded ? (
+                      <span className="inline-flex items-center rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+                        Không nhập kết quả
+                      </span>
                     ) : (
-                      <Button variant="outline" onClick={() => openDialog(item)}>
-                        Xem kết quả
+                      <Button variant={canEdit ? 'default' : 'outline'} onClick={() => openDialog(item)}>
+                        {getServiceResultActionLabel(item)}
                       </Button>
                     )}
                   </div>
@@ -1056,15 +1155,16 @@ export default function ServiceDeskPage() {
       <Dialog open={dialogOpen} onOpenChange={(open) => {
         if (!open) closeDialog();
       }}>
-        <DialogContent className="max-h-[92vh] max-w-6xl overflow-hidden p-0">
-          <DialogHeader className="border-b bg-background px-6 pb-4 pt-6">
+        <DialogContent className="flex h-[90vh] max-h-[90vh] max-w-6xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b bg-background px-6 pb-4 pt-6">
             <DialogTitle>
               {selectedItem ? `${getServiceLabel(selectedItem)} - ${selectedItem.patientName || ''}` : 'Phiếu kết quả'}
             </DialogTitle>
           </DialogHeader>
 
-          <div className="grid max-h-[calc(92vh-140px)] grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1.25fr)_360px]">
-            <div className="overflow-y-auto px-6 py-5">
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="grid h-full min-h-0 auto-rows-[minmax(0,1fr)] grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1.25fr)_360px]">
+              <div className="min-h-0 overflow-y-auto py-5 pl-6 pr-2">
               <div className="space-y-5">
                 <div className="grid grid-cols-1 gap-4 rounded-2xl border bg-muted/15 p-4 md:grid-cols-3">
                   <div>
@@ -1080,11 +1180,18 @@ export default function ServiceDeskPage() {
                     <p className="mt-1 font-medium text-foreground">{form.templateCode}</p>
                   </div>
                 </div>
+                {selectedResultReadOnly ? (
+                  <div className="inline-flex w-fit items-center gap-2 rounded-full border border-success/30 bg-success/10 px-3 py-1.5 text-xs font-medium text-success">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    Kết quả đã xác nhận, chỉ có thể xem.
+                  </div>
+                ) : null}
 
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
                     <label className="mb-1.5 block text-sm font-medium">Tiêu đề phiếu PDF</label>
                     <Input
+                      disabled={selectedResultReadOnly}
                       value={form.reportTitle}
                       onChange={(event) => setForm({ ...form, reportTitle: event.target.value })}
                     />
@@ -1092,6 +1199,7 @@ export default function ServiceDeskPage() {
                   <div>
                     <label className="mb-1.5 block text-sm font-medium">Tóm tắt hiển thị nhanh</label>
                     <Input
+                      disabled={selectedResultReadOnly}
                       value={form.resultTextVn}
                       onChange={(event) => setForm({ ...form, resultTextVn: event.target.value })}
                       placeholder="Dùng cho summary ngắn ở danh sách và màn bác sĩ"
@@ -1102,9 +1210,13 @@ export default function ServiceDeskPage() {
                 <div className="rounded-2xl border bg-background p-4">
                   <div className="mb-4 flex items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-base font-semibold text-foreground">Form nhập kết quả chuẩn hoá</h3>
+                      <h3 className="text-base font-semibold text-foreground">
+                        {selectedResultReadOnly ? 'Chi tiết kết quả chuẩn hoá' : 'Form nhập kết quả chuẩn hoá'}
+                      </h3>
                       <p className="text-sm text-muted-foreground">
-                        Dữ liệu sẽ được lưu có cấu trúc, đẩy RabbitMQ để sinh PDF và trả về màn bác sĩ.
+                        {selectedResultReadOnly
+                          ? 'Kết quả đã xác nhận, chỉ có thể xem.'
+                          : 'Dữ liệu sẽ được lưu có cấu trúc, đẩy RabbitMQ để sinh PDF và trả về màn bác sĩ.'}
                       </p>
                     </div>
                   </div>
@@ -1116,21 +1228,27 @@ export default function ServiceDeskPage() {
                     <div>
                       <h3 className="text-base font-semibold text-foreground">Ảnh / tệp đính kèm</h3>
                       <p className="text-sm text-muted-foreground">
-                        Hỗ trợ ảnh siêu âm, phim chụp, PDF, tài liệu nội bộ hoặc file tham chiếu.
-                        {!selectedItem?.resultId ? ' Lưu kết quả trước để hệ thống tạo resultId rồi mới cho phép tải tệp.' : ''}
+                        {selectedResultReadOnly
+                          ? 'Kết quả đã xác nhận, chỉ có thể xem.'
+                          : 'Hỗ trợ ảnh siêu âm, phim chụp, PDF, tài liệu nội bộ hoặc file tham chiếu.'}
+                        {!selectedResultReadOnly && !selectedItem?.resultId
+                          ? ' Lưu kết quả trước để hệ thống tạo resultId rồi mới cho phép tải tệp.'
+                          : ''}
                       </p>
                     </div>
-                    <label className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium ${selectedItem?.resultId ? 'cursor-pointer hover:bg-muted/40' : 'cursor-not-allowed opacity-60'}`}>
-                      {uploadingFiles ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-                      Tải tệp lên
-                      <input
-                        type="file"
-                        multiple
-                        className="hidden"
-                        disabled={!selectedItem?.resultId}
-                        onChange={(event) => void handleUploadFiles(event.target.files)}
-                      />
-                    </label>
+                    {!selectedResultReadOnly ? (
+                      <label className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium ${selectedItem?.resultId ? 'cursor-pointer hover:bg-muted/40' : 'cursor-not-allowed opacity-60'}`}>
+                        {uploadingFiles ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+                        Tải tệp lên
+                        <input
+                          type="file"
+                          multiple
+                          className="hidden"
+                          disabled={!selectedItem?.resultId}
+                          onChange={(event) => void handleUploadFiles(event.target.files)}
+                        />
+                      </label>
+                    ) : null}
                   </div>
 
                   <div className="grid gap-3 md:grid-cols-2">
@@ -1160,19 +1278,21 @@ export default function ServiceDeskPage() {
                             </button>
                             <p className="mt-1 text-xs text-muted-foreground">{attachment.mimeType || 'Tệp đính kèm'}</p>
                           </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() =>
-                              setForm((prev) => ({
-                                ...prev,
-                                attachments: prev.attachments.filter((_, fileIndex) => fileIndex !== index),
-                              }))
-                            }
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          {!selectedResultReadOnly ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  attachments: prev.attachments.filter((_, fileIndex) => fileIndex !== index),
+                                }))
+                              }
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          ) : null}
                         </div>
                       ))
                     )}
@@ -1181,7 +1301,7 @@ export default function ServiceDeskPage() {
               </div>
             </div>
 
-            <div className="overflow-y-auto border-l bg-muted/10 px-6 py-5">
+              <div className="min-h-0 overflow-y-auto border-l bg-muted/10 py-5 pl-6 pr-2">
               <div className="space-y-4">
                 <div className="rounded-2xl border bg-background p-4">
                   <h3 className="text-sm font-semibold text-foreground">Trạng thái PDF</h3>
@@ -1212,14 +1332,22 @@ export default function ServiceDeskPage() {
                 </div>
 
                 <div className="rounded-2xl border bg-background p-4">
-                  <h3 className="text-sm font-semibold text-foreground">Luồng nghiệp vụ sau khi lưu</h3>
-                  <ol className="mt-3 space-y-2 text-sm text-muted-foreground">
-                    <li>1. Kỹ thuật viên lưu kết quả theo đúng template dịch vụ.</li>
-                    <li>2. Backend đẩy message sang RabbitMQ để sinh PDF kết quả.</li>
-                    <li>3. Websocket cập nhật lại màn kỹ thuật viên và màn bác sĩ.</li>
-                    <li>4. Bác sĩ xem kết quả/PDF rồi kết luận và hoàn tất lần khám.</li>
-                    <li>5. Public tra cứu kết quả bằng OTP sau khi bác sĩ đã chốt ca.</li>
-                  </ol>
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {selectedResultReadOnly ? 'Trạng thái kết quả' : 'Luồng nghiệp vụ sau khi lưu'}
+                  </h3>
+                  {selectedResultReadOnly ? (
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      Kết quả đã xác nhận, chỉ có thể xem.
+                    </p>
+                  ) : (
+                    <ol className="mt-3 space-y-2 text-sm text-muted-foreground">
+                      <li>1. Kỹ thuật viên lưu kết quả theo đúng template dịch vụ.</li>
+                      <li>2. Backend đẩy message sang RabbitMQ để sinh PDF kết quả.</li>
+                      <li>3. Websocket cập nhật lại màn kỹ thuật viên và màn bác sĩ.</li>
+                      <li>4. Bác sĩ xem kết quả/PDF rồi kết luận và hoàn tất lần khám.</li>
+                      <li>5. Public tra cứu kết quả bằng OTP sau khi bác sĩ đã chốt ca.</li>
+                    </ol>
+                  )}
                 </div>
 
                 <div className="rounded-2xl border bg-background p-4">
@@ -1255,16 +1383,19 @@ export default function ServiceDeskPage() {
                   </div>
                 </div>
               </div>
+              </div>
             </div>
           </div>
 
-          <DialogFooter className="border-t bg-background px-6 py-4">
+          <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
             <Button variant="outline" onClick={closeDialog}>
               Đóng
             </Button>
-            <Button onClick={handleSubmit} disabled={submitResult.isPending || uploadingFiles}>
-              {submitResult.isPending ? 'Đang lưu...' : 'Lưu kết quả & sinh PDF'}
-            </Button>
+            {!selectedResultReadOnly ? (
+              <Button onClick={handleSubmit} disabled={submitResult.isPending || uploadingFiles}>
+                {submitResult.isPending ? 'Đang lưu...' : 'Lưu kết quả'}
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

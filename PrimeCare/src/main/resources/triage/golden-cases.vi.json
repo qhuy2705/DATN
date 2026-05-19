@@ -1,0 +1,58 @@
+{
+  "version": "2026.05.01",
+  "items": [
+    {
+      "id": "chest_pain_dyspnea",
+      "reasonForVisit": "Tức ngực, thở không nổi từ sáng",
+      "expectedFlags": ["CHEST_PAIN", "DYSPNEA"],
+      "expectedPriority": "URGENT",
+      "expectedLevel": "RED_FLAG",
+      "expectedConfidence": "HIGH"
+    },
+    {
+      "id": "mild_sore_throat",
+      "reasonForVisit": "Đau họng nhẹ 2 ngày, vẫn sinh hoạt bình thường",
+      "expectedPriority": "ROUTINE",
+      "expectedLevel": "NONE"
+    },
+    {
+      "id": "high_fever_diabetes",
+      "reasonForVisit": "Sốt cao, mệt nhiều, có tiểu đường",
+      "expectedPriority": "PRIORITY",
+      "expectedLevel": "WATCH"
+    },
+    {
+      "id": "heavy_bleeding_blood_thinner",
+      "reasonForVisit": "Chảy máu nhiều, đang dùng thuốc chống đông",
+      "expectedFlags": ["HEAVY_BLEEDING"],
+      "expectedRiskModifiers": ["ON_BLOOD_THINNER"],
+      "expectedPriority": "URGENT"
+    },
+    {
+      "id": "dialysis_mild_symptom",
+      "reasonForVisit": "Ho nhẹ",
+      "chronicConditionOthers": ["Suy thận mạn"],
+      "expectedPriorityOneOf": ["ROUTINE", "PRIORITY"],
+      "expectedNotPriority": "URGENT"
+    },
+    {
+      "id": "none_with_other_asthma",
+      "reasonForVisit": "Khó chịu nhẹ",
+      "chronicConditions": ["NONE"],
+      "chronicConditionOthers": ["Hen phế quản"],
+      "expectedRiskModifiers": ["RESPIRATORY_RISK"]
+    },
+    {
+      "id": "card_red_flag_ai_empty",
+      "redFlags": ["SEIZURE"],
+      "expectedPriority": "URGENT",
+      "expectedLevel": "RED_FLAG"
+    },
+    {
+      "id": "text_red_flag_no_card",
+      "reasonForVisit": "Méo miệng, nói khó",
+      "expectedFlags": ["STROKE_SIGNS"],
+      "expectedPriority": "URGENT"
+    }
+  ]
+}

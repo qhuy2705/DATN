@@ -1,5 +1,6 @@
 package com.PrimeCare.PrimeCare.modules.masterdata.specialty.service;
 
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.masterdata.specialty.dto.request.CreateSpecialtyRequest;
 import com.PrimeCare.PrimeCare.modules.masterdata.specialty.dto.request.UpdateSpecialtyRequest;
 import com.PrimeCare.PrimeCare.modules.masterdata.specialty.dto.response.SpecialtyResponse;
@@ -14,11 +15,15 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 @Service
 @RequiredArgsConstructor
 public class SpecialtyService {
 
     private final SpecialtyRepository specialtyRepository;
+    private final AuditLogService auditLogService;
 
     @Transactional(readOnly = true)
     public PageResponse<SpecialtyResponse> listActive(String q, Pageable pageable) {
@@ -59,13 +64,16 @@ public class SpecialtyService {
                                        .maxPerSession(request.getMaxPerSession())
                                        .build();
 
-        return toResponse(specialtyRepository.save(specialty));
+        specialty = specialtyRepository.save(specialty);
+        auditLogService.log(null, "CREATE_SPECIALTY", "SPECIALTY", specialty.getId(), null, snapshotSpecialty(specialty));
+        return toResponse(specialty);
     }
 
     @Transactional
     public SpecialtyResponse update(Long id, UpdateSpecialtyRequest request) {
         Specialty specialty = specialtyRepository.findById(id)
                                                  .orElseThrow(() -> new ApiException(ErrorCode.SPECIALTY_NOT_FOUND));
+        Map<String, Object> before = snapshotSpecialty(specialty);
 
         if (request.getNameVn() != null) specialty.setNameVn(request.getNameVn());
         if (request.getNameEn() != null) specialty.setNameEn(request.getNameEn());
@@ -76,16 +84,21 @@ public class SpecialtyService {
         if (request.getDefaultSlotMinutes() != null) specialty.setDefaultSlotMinutes(request.getDefaultSlotMinutes());
         if (request.getMaxPerSession() != null) specialty.setMaxPerSession(request.getMaxPerSession());
 
-        return toResponse(specialtyRepository.save(specialty));
+        specialty = specialtyRepository.save(specialty);
+        auditLogService.log(null, "UPDATE_SPECIALTY", "SPECIALTY", specialty.getId(), before, snapshotSpecialty(specialty));
+        return toResponse(specialty);
     }
 
     @Transactional
     public SpecialtyResponse updateStatus(Long id, String status) {
         Specialty specialty = specialtyRepository.findById(id)
                                                  .orElseThrow(() -> new ApiException(ErrorCode.SPECIALTY_NOT_FOUND));
+        Map<String, Object> before = snapshotSpecialty(specialty);
 
         specialty.setStatus(status.trim());
-        return toResponse(specialtyRepository.save(specialty));
+        specialty = specialtyRepository.save(specialty);
+        auditLogService.log(null, "UPDATE_SPECIALTY_STATUS", "SPECIALTY", specialty.getId(), before, snapshotSpecialty(specialty));
+        return toResponse(specialty);
     }
 
     @Transactional(readOnly = true)
@@ -125,5 +138,17 @@ public class SpecialtyService {
                                 .defaultSlotMinutes(entity.getDefaultSlotMinutes())
                                 .maxPerSession(entity.getMaxPerSession())
                                 .build();
+    }
+
+    private Map<String, Object> snapshotSpecialty(Specialty specialty) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("id", specialty.getId());
+        data.put("code", specialty.getCode());
+        data.put("nameVn", specialty.getNameVn());
+        data.put("nameEn", specialty.getNameEn());
+        data.put("status", specialty.getStatus());
+        data.put("defaultSlotMinutes", specialty.getDefaultSlotMinutes());
+        data.put("maxPerSession", specialty.getMaxPerSession());
+        return data;
     }
 }

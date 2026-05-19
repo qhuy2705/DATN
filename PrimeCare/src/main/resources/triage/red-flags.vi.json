@@ -1,0 +1,102 @@
+{
+  "version": "2026.05.01",
+  "items": [
+    {
+      "code": "CHEST_PAIN",
+      "label": "Đau ngực",
+      "synonyms": [
+        "đau ngực",
+        "tức ngực",
+        "nặng ngực",
+        "đau thắt ngực",
+        "đau ngực lan tay trái",
+        "đau ngực kèm vã mồ hôi"
+      ],
+      "weight": 80,
+      "priorityHint": "URGENT"
+    },
+    {
+      "code": "DYSPNEA",
+      "label": "Khó thở",
+      "synonyms": [
+        "khó thở",
+        "hụt hơi",
+        "thở gấp",
+        "thở không nổi",
+        "ngộp thở"
+      ],
+      "weight": 80,
+      "priorityHint": "URGENT"
+    },
+    {
+      "code": "FAINTING",
+      "label": "Ngất",
+      "synonyms": ["ngất", "xỉu", "bất tỉnh", "choáng ngất"],
+      "weight": 90,
+      "priorityHint": "URGENT"
+    },
+    {
+      "code": "SEIZURE",
+      "label": "Co giật",
+      "synonyms": ["co giật", "động kinh", "lên cơn co giật"],
+      "weight": 90,
+      "priorityHint": "URGENT"
+    },
+    {
+      "code": "STROKE_SIGNS",
+      "label": "Dấu hiệu đột quỵ",
+      "synonyms": [
+        "yếu nửa người",
+        "liệt nửa người",
+        "méo miệng",
+        "nói khó",
+        "nói ngọng",
+        "tê yếu tay chân"
+      ],
+      "weight": 100,
+      "priorityHint": "URGENT"
+    },
+    {
+      "code": "HEAVY_BLEEDING",
+      "label": "Chảy máu nhiều",
+      "synonyms": ["chảy máu nhiều", "máu chảy không cầm", "xuất huyết nhiều", "mất máu nhiều"],
+      "weight": 95,
+      "priorityHint": "URGENT"
+    },
+    {
+      "code": "SEVERE_PAIN",
+      "label": "Đau dữ dội",
+      "synonyms": ["đau dữ dội", "đau rất nặng", "đau không chịu được", "đau quằn quại"],
+      "weight": 70,
+      "priorityHint": "PRIORITY"
+    },
+    {
+      "code": "HIGH_FEVER",
+      "label": "Sốt cao",
+      "synonyms": ["sốt cao", "sốt rất cao", "sốt 39", "sốt 40"],
+      "weight": 55,
+      "priorityHint": "PRIORITY"
+    },
+    {
+      "code": "ALLERGIC_REACTION",
+      "label": "Phản ứng dị ứng",
+      "synonyms": ["dị ứng", "phản vệ", "nổi mề đay", "phù mạch", "sưng môi", "sưng mặt"],
+      "weight": 70,
+      "priorityHint": "PRIORITY"
+    },
+    {
+      "code": "ALTERED_MENTAL_STATUS",
+      "label": "Rối loạn ý thức",
+      "synonyms": ["lơ mơ", "không tỉnh táo", "rối loạn ý thức", "khó đánh thức"],
+      "weight": 90,
+      "priorityHint": "URGENT"
+    },
+    {
+      "code": "SEVERE_TRAUMA",
+      "label": "Chấn thương nặng",
+      "synonyms": ["tai nạn nặng", "chấn thương nặng", "ngã cao", "va đập mạnh"],
+      "weight": 90,
+      "priorityHint": "URGENT"
+    }
+  ]
+}

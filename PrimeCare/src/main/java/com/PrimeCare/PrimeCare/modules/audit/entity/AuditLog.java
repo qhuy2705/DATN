@@ -14,7 +14,8 @@ import java.time.LocalDateTime;
 @Entity
 @Table(
         name="audit_logs",
-        indexes = @Index(name="idx_audit_entity", columnList="entity,entity_id,created_at")
+        indexes = @Index(name="idx_audit_entity", columnList="entity,entity_id,created_at"),
+        uniqueConstraints = @UniqueConstraint(name = "uq_audit_logs_event_id", columnNames = "event_id")
 )
 public class AuditLog {
 
@@ -22,9 +23,18 @@ public class AuditLog {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "event_id", length = 36)
+    private String eventId;
+
     @ManyToOne(fetch=FetchType.LAZY)
     @JoinColumn(name="actor_id")
     private User actor;
+
+    @Column(name = "actor_name", length = 255)
+    private String actorName;
+
+    @Column(name = "actor_email", length = 255)
+    private String actorEmail;
 
     @Column(name="actor_role", length=32)
     private String actorRole;

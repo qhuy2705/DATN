@@ -1,11 +1,15 @@
 package com.PrimeCare.PrimeCare.modules.billing.controller;
 
 import com.PrimeCare.PrimeCare.modules.billing.dto.request.BankTransferTransactionRequest;
+import com.PrimeCare.PrimeCare.modules.billing.dto.request.ChangeInvoicePaymentMethodRequest;
 import com.PrimeCare.PrimeCare.modules.billing.dto.request.ManualBankTransferConfirmationRequest;
 import com.PrimeCare.PrimeCare.modules.billing.dto.request.PayInvoiceRequest;
+import com.PrimeCare.PrimeCare.modules.billing.dto.request.RefundInvoiceRequest;
+import com.PrimeCare.PrimeCare.modules.billing.dto.request.RefundInvoiceItemsRequest;
 import com.PrimeCare.PrimeCare.modules.billing.dto.response.CashierSummaryResponse;
 import com.PrimeCare.PrimeCare.modules.billing.dto.response.InvoicePdfJobResponse;
 import com.PrimeCare.PrimeCare.modules.billing.dto.response.InvoiceResponse;
+import com.PrimeCare.PrimeCare.modules.billing.dto.response.RefundableInvoiceItemsResponse;
 import com.PrimeCare.PrimeCare.modules.billing.entity.InvoicePdfJob;
 import com.PrimeCare.PrimeCare.modules.billing.service.BillingService;
 import com.PrimeCare.PrimeCare.modules.billing.service.InvoicePdfJobService;
@@ -98,6 +102,19 @@ public class CashierInvoiceController {
         );
     }
 
+    @PostMapping("/prescriptions/{prescriptionId}/invoice")
+    @PreAuthorize("hasRole('CASHIER')")
+    public ApiResponse<InvoiceResponse> createPrescriptionInvoice(
+            @PathVariable Long prescriptionId,
+            Authentication authentication,
+            @Valid @RequestBody PayInvoiceRequest req
+    ) {
+        return ApiResponse.ok(
+                "Tạo hóa đơn thuốc thành công",
+                billingService.createPrescriptionInvoice(prescriptionId, Long.valueOf(authentication.getName()), req)
+        );
+    }
+
     @PostMapping("/invoices/{invoiceId}/mark-paid")
     @PreAuthorize("hasRole('CASHIER')")
     public ApiResponse<InvoiceResponse> markPaid(
@@ -106,6 +123,20 @@ public class CashierInvoiceController {
     ) {
         Long cashierUserId = Long.valueOf(authentication.getName());
         return ApiResponse.ok("Đã xác nhận thanh toán", billingService.markPaid(invoiceId, cashierUserId));
+    }
+
+    @PostMapping("/invoices/{invoiceId}/change-payment-method")
+    @PreAuthorize("hasRole('CASHIER')")
+    public ApiResponse<InvoiceResponse> changePaymentMethod(
+            @PathVariable Long invoiceId,
+            Authentication authentication,
+            @Valid @RequestBody ChangeInvoicePaymentMethodRequest req
+    ) {
+        Long cashierUserId = Long.valueOf(authentication.getName());
+        return ApiResponse.ok(
+                "Đã cập nhật phương thức thanh toán",
+                billingService.changeInvoicePaymentMethod(invoiceId, cashierUserId, req)
+        );
     }
 
     @PostMapping("/invoices/{invoiceId}/bank-transfer/reconcile")
@@ -145,12 +176,36 @@ public class CashierInvoiceController {
     @PreAuthorize("hasRole('CASHIER')")
     public ApiResponse<InvoiceResponse> refundInvoice(
             @PathVariable Long invoiceId,
-            @RequestParam Long refundAmount,
-            @RequestParam String reason,
+            @RequestParam(required = false) Long refundAmount,
+            @RequestParam(required = false) String reason,
+            @RequestBody(required = false) RefundInvoiceRequest request,
             Authentication authentication
     ) {
         Long cashierUserId = Long.valueOf(authentication.getName());
-        return ApiResponse.ok("Đã hoàn tiền", billingService.refundInvoice(invoiceId, refundAmount, reason, cashierUserId));
+        Long effectiveRefundAmount = refundAmount != null
+                ? refundAmount
+                : (request != null ? request.getRefundAmount() : null);
+        String effectiveReason = reason != null && !reason.isBlank()
+                ? reason
+                : (request != null ? request.getReason() : null);
+        return ApiResponse.ok("Đã hoàn tiền", billingService.refundInvoice(invoiceId, effectiveRefundAmount, effectiveReason, cashierUserId));
+    }
+
+    @GetMapping("/invoices/{invoiceId}/refundable-items")
+    @PreAuthorize("hasRole('CASHIER')")
+    public ApiResponse<RefundableInvoiceItemsResponse> refundableItems(@PathVariable Long invoiceId) {
+        return ApiResponse.ok("OK", billingService.getRefundableItems(invoiceId));
+    }
+
+    @PostMapping("/invoices/{invoiceId}/refund-items")
+    @PreAuthorize("hasRole('CASHIER')")
+    public ApiResponse<InvoiceResponse> refundItems(
+            @PathVariable Long invoiceId,
+            @Valid @RequestBody RefundInvoiceItemsRequest request,
+            Authentication authentication
+    ) {
+        Long cashierUserId = Long.valueOf(authentication.getName());
+        return ApiResponse.ok("Đã hoàn tiền các mục đã chọn", billingService.refundInvoiceItems(invoiceId, request, cashierUserId));
     }
 
     @PostMapping("/invoices/{invoiceId}/pdf-jobs")

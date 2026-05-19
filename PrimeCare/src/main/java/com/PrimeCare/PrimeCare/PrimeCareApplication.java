@@ -1,5 +1,6 @@
 package com.PrimeCare.PrimeCare;
 
+import com.PrimeCare.PrimeCare.config.BookingEmailOtpProperties;
 import com.PrimeCare.PrimeCare.config.MailSenderProperties;
 import com.PrimeCare.PrimeCare.config.PublicLookupOtpProperties;
 import com.PrimeCare.PrimeCare.config.S3Properties;
@@ -17,6 +18,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 		S3Properties.class,
 		SmsProperties.class,
 		PublicLookupOtpProperties.class,
+		BookingEmailOtpProperties.class,
 		MailSenderProperties.class
 })
 public class PrimeCareApplication {

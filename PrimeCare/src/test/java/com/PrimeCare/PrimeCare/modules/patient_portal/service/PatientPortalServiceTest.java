@@ -12,23 +12,32 @@ import com.PrimeCare.PrimeCare.modules.billing.repository.InvoiceStatusHistoryRe
 import com.PrimeCare.PrimeCare.modules.billing.service.BillingQrService;
 import com.PrimeCare.PrimeCare.modules.billing.service.InvoicePdfService;
 import com.PrimeCare.PrimeCare.modules.file.service.FileStorageService;
+import com.PrimeCare.PrimeCare.modules.encounter.entity.Encounter;
 import com.PrimeCare.PrimeCare.modules.patient.entity.Patient;
 import com.PrimeCare.PrimeCare.modules.patient_portal.dto.request.UpdatePatientSelfProfileRequest;
+import com.PrimeCare.PrimeCare.modules.service_order.entity.ServiceOrder;
+import com.PrimeCare.PrimeCare.modules.service_order.entity.ServiceOrderItem;
+import com.PrimeCare.PrimeCare.modules.service_result.entity.ServiceResult;
 import com.PrimeCare.PrimeCare.modules.service_result.repository.ServiceResultRepository;
 import com.PrimeCare.PrimeCare.modules.service_result.repository.ServiceResultStatusHistoryRepository;
+import com.PrimeCare.PrimeCare.shared.enums.PdfGenerationStatus;
 import com.PrimeCare.PrimeCare.shared.enums.PatientStatus;
+import com.PrimeCare.PrimeCare.shared.enums.ServiceResultStatus;
 import com.PrimeCare.PrimeCare.shared.enums.UserRole;
 import com.PrimeCare.PrimeCare.shared.exception.ApiException;
 import com.PrimeCare.PrimeCare.shared.exception.ErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -188,6 +197,76 @@ class PatientPortalServiceTest {
         assertThat(((Map<?, ?>) afterCaptor.getValue()).containsKey("currentPassword")).isFalse();
     }
 
+    @Test
+    void shouldRejectResultDownloadWhenResultBelongsToAnotherPatient() {
+        User user = patientUser();
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(serviceResultRepository.findByIdAndServiceOrderItem_ServiceOrder_Encounter_Patient_Id(99L, user.getPatient().getId()))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.downloadMyResultPdf(user.getId(), 99L))
+                .isInstanceOfSatisfying(ApiException.class, ex ->
+                        assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_REQUEST)
+                );
+
+        verifyNoInteractions(fileStorageService);
+    }
+
+    @Test
+    void shouldRejectResultDownloadWhenResultIsCompletedButNotVerifiedEvenIfPdfExists() {
+        User user = patientUser();
+        ServiceResult result = result(31L, ServiceResultStatus.COMPLETED, "results/completed.pdf", user.getPatient());
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(serviceResultRepository.findByIdAndServiceOrderItem_ServiceOrder_Encounter_Patient_Id(result.getId(), user.getPatient().getId()))
+                .thenReturn(Optional.of(result));
+
+        assertThatThrownBy(() -> service.downloadMyResultPdf(user.getId(), result.getId()))
+                .isInstanceOfSatisfying(ApiException.class, ex ->
+                        assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_REQUEST)
+                );
+
+        verifyNoInteractions(fileStorageService);
+    }
+
+    @Test
+    void shouldDownloadResultPdfWhenResultIsVerifiedAndPdfExists() {
+        User user = patientUser();
+        ServiceResult result = result(32L, ServiceResultStatus.VERIFIED, "results/verified.pdf", user.getPatient());
+        byte[] pdf = "%PDF verified".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(serviceResultRepository.findByIdAndServiceOrderItem_ServiceOrder_Encounter_Patient_Id(result.getId(), user.getPatient().getId()))
+                .thenReturn(Optional.of(result));
+        when(fileStorageService.downloadAsBytes("results/verified.pdf")).thenReturn(pdf);
+
+        byte[] downloaded = service.downloadMyResultPdf(user.getId(), result.getId());
+
+        assertThat(downloaded).isEqualTo(pdf);
+    }
+
+    @Test
+    void shouldListOnlyVerifiedResultsWhenPatientViewsResults() {
+        User user = patientUser();
+        ServiceResult verified = result(41L, ServiceResultStatus.VERIFIED, "results/verified.pdf", user.getPatient());
+        ServiceResult completed = result(42L, ServiceResultStatus.COMPLETED, "results/completed.pdf", user.getPatient());
+        ServiceResult draft = result(43L, ServiceResultStatus.DRAFT, null, user.getPatient());
+        PageRequest pageable = PageRequest.of(0, 10);
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(serviceResultRepository.findByServiceOrderItem_ServiceOrder_Encounter_Patient_IdAndStatusOrderByVerifiedAtDescCreatedAtDesc(
+                user.getPatient().getId(),
+                ServiceResultStatus.VERIFIED,
+                pageable
+        )).thenReturn(new PageImpl<>(List.of(verified), pageable, 1));
+
+        var response = service.listMyResults(user.getId(), pageable);
+
+        assertThat(response.getItems())
+                .extracting("resultId")
+                .containsExactly(verified.getId());
+        assertThat(response.getItems())
+                .extracting("status")
+                .containsExactly(ServiceResultStatus.VERIFIED.name());
+    }
+
     private User patientUser() {
         Patient patient = Patient.builder()
                 .id(2L)
@@ -204,6 +283,32 @@ class PatientPortalServiceTest {
                 .email("old@example.test")
                 .phone("0900000000")
                 .passwordHash("hash")
+                .build();
+    }
+
+    private ServiceResult result(Long id, ServiceResultStatus status, String reportPdfPath, Patient patient) {
+        Encounter encounter = Encounter.builder()
+                .id(100L + id)
+                .code("ENC-" + id)
+                .patient(patient)
+                .patientFullNameSnapshot(patient.getFullName())
+                .build();
+        ServiceOrder order = ServiceOrder.builder()
+                .id(200L + id)
+                .code("SO-" + id)
+                .encounter(encounter)
+                .build();
+        ServiceOrderItem item = ServiceOrderItem.builder()
+                .id(300L + id)
+                .serviceOrder(order)
+                .serviceNameVnSnapshot("Xet nghiem mau")
+                .build();
+        return ServiceResult.builder()
+                .id(id)
+                .serviceOrderItem(item)
+                .status(status)
+                .reportPdfPath(reportPdfPath)
+                .reportPdfStatus(reportPdfPath != null ? PdfGenerationStatus.COMPLETED : PdfGenerationStatus.PENDING)
                 .build();
     }
 }

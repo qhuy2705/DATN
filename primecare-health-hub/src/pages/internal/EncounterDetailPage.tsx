@@ -49,7 +49,8 @@ import {
   useValidateVitals,
 } from '@/hooks/use-doctor-data';
 import { useMedicalServices } from '@/hooks/use-public-data';
-import type { Encounter, EncounterDiagnosisResponse } from '@/types/api';
+import { isRefundedOrCancelledItem } from '@/lib/refund-status';
+import type { Encounter, EncounterDiagnosisResponse, ServiceOrder } from '@/types/api';
 
 type PendingVitalsAction = 'save' | 'complete' | 'leave' | null;
 
@@ -129,7 +130,20 @@ function buildEncounterForm(encounter: Encounter): EncounterFormState {
   };
 }
 
-function getCompletionBlockingReasons(encounter: Encounter, form: EncounterFormState) {
+function isActiveWaitingServiceItem(item: ServiceOrder['items'][number]) {
+  if (isRefundedOrCancelledItem(item)) return false;
+  return item.status !== 'DONE' && item.resultStatus !== 'COMPLETED' && item.resultStatus !== 'VERIFIED';
+}
+
+function hasActiveWaitingServiceResults(orders: ServiceOrder[]) {
+  return orders.some((order) => order.items.some(isActiveWaitingServiceItem));
+}
+
+function getCompletionBlockingReasons(
+  encounter: Encounter,
+  form: EncounterFormState,
+  hasActiveWaitingResults: boolean,
+) {
   const reasons: string[] = [];
   const hasFinalDiagnosis =
     form.diagnoses.some((diagnosis) => diagnosis.diagnosisType === 'FINAL') ||
@@ -138,20 +152,23 @@ function getCompletionBlockingReasons(encounter: Encounter, form: EncounterFormS
   if (!hasFinalDiagnosis) reasons.push('Chưa có chẩn đoán chính ICD-10');
   if (!form.conclusion.trim() && !encounter.conclusion?.trim()) reasons.push('Chưa có kết luận');
   if (encounter.hasPendingPayment) reasons.push('Còn chỉ định dịch vụ chờ thanh toán');
-  if (encounter.hasWaitingResults) reasons.push('Còn dịch vụ chờ kết quả');
+  if (hasActiveWaitingResults) reasons.push('Còn dịch vụ chờ kết quả');
   if (encounter.status === 'COMPLETED') reasons.push('Hồ sơ đã hoàn tất');
   if (encounter.status === 'CANCELLED') reasons.push('Hồ sơ đã hủy');
 
   return reasons;
 }
 
-function getPrescriptionBlockReason(encounter?: Encounter) {
+function getPrescriptionBlockReason(encounter?: Encounter, hasActiveWaitingResults = false) {
   if (!encounter) return '';
   if (encounter.status === 'COMPLETED') return 'Hồ sơ đã hoàn tất, không thể kê thêm đơn.';
   if (encounter.status === 'CANCELLED') return 'Hồ sơ đã hủy, không thể kê đơn.';
   if (encounter.hasPendingPayment) return 'Còn chỉ định dịch vụ chờ thanh toán.';
-  if (encounter.hasWaitingResults) return 'Còn dịch vụ chờ kết quả.';
-  if (encounter.canCreatePrescription === false) return 'Hồ sơ chưa đủ điều kiện kê đơn thuốc.';
+  if (hasActiveWaitingResults) return 'Còn dịch vụ chờ kết quả.';
+  if (encounter.canCreatePrescription === false && (encounter.issuedPrescriptionCount ?? 0) > 0) {
+    return 'Lần khám đã có đơn thuốc đang hiệu lực.';
+  }
+  if (encounter.canCreatePrescription === false) return 'Không thể tạo đơn thuốc mới cho lần khám này.';
   return '';
 }
 
@@ -215,22 +232,27 @@ export default function EncounterDetailPage() {
   );
 
   const canEdit = encounter?.status !== 'COMPLETED' && encounter?.status !== 'CANCELLED';
+  const activeWaitingResults = useMemo(
+    () => hasActiveWaitingServiceResults(serviceOrders),
+    [serviceOrders],
+  );
   const canOrderServices =
     !!encounter &&
     canEdit &&
     !encounter.hasPendingPayment &&
-    !encounter.hasWaitingResults;
+    !activeWaitingResults;
   const canCreatePrescription = !!encounter?.canCreatePrescription && canEdit;
-  const prescriptionBlockReason = getPrescriptionBlockReason(encounter);
+  const prescriptionBlockReason = getPrescriptionBlockReason(encounter, activeWaitingResults);
   const formDirty = savedFormSnapshot ? JSON.stringify(form) !== savedFormSnapshot : false;
   const completionBlockingReasons = encounter
-    ? getCompletionBlockingReasons(encounter, form)
+    ? getCompletionBlockingReasons(encounter, form, activeWaitingResults)
     : [];
   const backendCompletionBlocked =
     !!encounter &&
     encounter.canComplete === false &&
     completionBlockingReasons.length === 0 &&
-    !formDirty;
+    !formDirty &&
+    !(encounter.hasWaitingResults && !activeWaitingResults);
   const completionDisplayReasons = backendCompletionBlocked
     ? ['Hệ thống chưa cho phép hoàn tất hồ sơ trong trạng thái hiện tại']
     : completionBlockingReasons;
@@ -481,6 +503,7 @@ export default function EncounterDetailPage() {
             encounterId={encounter.id}
             canCreatePrescription={canCreatePrescription}
             canEdit={canEdit}
+            createBlockedReason={prescriptionBlockReason}
           />
           <EncounterTimelineSection encounterId={encounter.id} />
           {prescriptionBlockReason ? (

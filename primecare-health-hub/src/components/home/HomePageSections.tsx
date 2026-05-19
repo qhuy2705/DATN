@@ -78,14 +78,14 @@ export function HomeHeroSection({
       <div className="absolute inset-0">
         <img src={heroImage} alt="PrimeCare" className="h-full w-full object-cover opacity-20" />
         <div className="absolute inset-0 bg-[linear-gradient(115deg,rgba(4,32,68,0.98),rgba(7,45,91,0.95)_48%,rgba(18,93,167,0.74))]" />
-        <div className="absolute left-[-12%] top-[-20%] h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute left-[-12%] top-[-20%] h-72 w-72 rounded-full bg-foreground/10 blur-3xl" />
         <div className="absolute bottom-[-18%] right-[-8%] h-96 w-96 rounded-full bg-accent/20 blur-3xl" />
       </div>
 
       <div className="container-wide relative z-10 py-14 md:py-20 lg:py-24">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] lg:items-center">
           <div className="max-w-4xl">
-            <span className="inline-flex items-center rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-white/82">
+            <span className="inline-flex items-center rounded-full border border-white/20 bg-foreground/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-white/82">
               {isEn ? 'PrimeCare appointment and patient self-service' : 'PrimeCare đặt lịch và tra cứu chăm sóc'}
             </span>
 
@@ -108,7 +108,7 @@ export function HomeHeroSection({
               <Button
                 size="lg"
                 asChild
-                className="h-12 w-full rounded-full bg-white px-8 font-semibold text-primary shadow-[0_18px_36px_rgba(0,0,0,0.18)] transition-transform hover:-translate-y-0.5 hover:bg-white/92 sm:w-auto"
+                className="h-12 w-full rounded-full bg-foreground px-8 font-semibold text-background shadow-[0_18px_36px_rgba(0,0,0,0.18)] transition-transform hover:-translate-y-0.5 hover:bg-foreground/90 sm:w-auto"
               >
                 <Link to="/booking">
                   <Calendar className="mr-2 h-5 w-5" />
@@ -120,7 +120,7 @@ export function HomeHeroSection({
                 size="lg"
                 variant="outline"
                 asChild
-                className="h-12 w-full rounded-full border-white/30 bg-white/8 px-6 text-white hover:bg-white/14 hover:text-white sm:w-auto"
+                className="h-12 w-full rounded-full border-white/30 bg-foreground/10 px-6 text-white hover:bg-foreground/20 hover:text-white sm:w-auto"
               >
                 <Link to="/doctors">
                   <Users className="mr-2 h-5 w-5" />
@@ -146,7 +146,7 @@ export function HomeHeroSection({
 
             <div className="mt-8 grid gap-3 text-sm text-white/78 sm:grid-cols-3">
               {heroAssurance.map((item) => (
-                <div key={item.text} className="flex items-start gap-2.5 rounded-2xl border border-white/14 bg-white/[0.07] p-3">
+                <div key={item.text} className="flex items-start gap-2.5 rounded-2xl border border-white/14 bg-foreground/[0.07] p-3">
                   <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-white" />
                   <span className="leading-5">{item.text}</span>
                 </div>
@@ -156,8 +156,8 @@ export function HomeHeroSection({
 
           <ScrollReveal className="lg:justify-self-end">
             <div className="relative">
-              <div className="absolute -inset-3 rounded-[2.3rem] bg-white/10 blur-2xl" aria-hidden />
-              <div className="relative rounded-[2rem] border border-white/18 bg-white/[0.96] p-4 text-foreground shadow-[0_34px_90px_rgba(3,26,54,0.34)] md:p-6">
+              <div className="absolute -inset-3 rounded-[2.3rem] bg-foreground/10 blur-2xl" aria-hidden />
+              <div className="relative rounded-[2rem] border border-border/70 bg-card/95 p-4 text-card-foreground shadow-[0_34px_90px_rgba(3,26,54,0.34)] md:p-6">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
@@ -251,7 +251,7 @@ export function HomePatientPathsSection({ patientPaths }: { patientPaths: HomePa
                       <div
                         className={
                           item.primary
-                            ? 'flex h-11 w-11 items-center justify-center rounded-2xl bg-white/16 text-white'
+                            ? 'flex h-11 w-11 items-center justify-center rounded-2xl bg-primary-foreground/20 text-primary-foreground'
                             : 'flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary'
                         }
                       >
@@ -637,7 +637,7 @@ export function HomeCtaSection({ isEn }: { isEn: boolean }) {
       <div className="container-wide">
         <ScrollReveal>
           <div className="relative overflow-hidden rounded-[2rem] bg-primary p-6 text-primary-foreground shadow-[0_24px_70px_hsl(var(--shadow-color)_/_0.16)] md:p-8">
-            <div className="absolute right-[-6rem] top-[-6rem] h-64 w-64 rounded-full bg-white/10 blur-3xl" aria-hidden />
+            <div className="absolute right-[-6rem] top-[-6rem] h-64 w-64 rounded-full bg-foreground/10 blur-3xl" aria-hidden />
             <div className="relative grid gap-7 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
               <div>
                 <p className="text-sm font-semibold uppercase tracking-[0.16em] text-white/70">
@@ -654,16 +654,16 @@ export function HomeCtaSection({ isEn }: { isEn: boolean }) {
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
-                <Button size="lg" asChild className="h-12 rounded-full bg-white px-8 font-semibold text-primary hover:bg-white/92">
+                <Button size="lg" asChild className="h-12 rounded-full bg-foreground px-8 font-semibold text-background hover:bg-foreground/90">
                   <Link to="/booking">
                     <Calendar className="mr-2 h-5 w-5" />
                     {isEn ? 'Book appointment' : 'Đặt lịch khám'}
                   </Link>
                 </Button>
-                <Button size="lg" variant="outline" asChild className="h-12 rounded-full border-white/30 bg-white/8 text-white hover:bg-white/14 hover:text-white">
+                <Button size="lg" variant="outline" asChild className="h-12 rounded-full border-white/30 bg-foreground/10 text-white hover:bg-foreground/20 hover:text-white">
                   <Link to="/appointments/lookup">{isEn ? 'Appointment lookup' : 'Tra cứu lịch hẹn'}</Link>
                 </Button>
-                <Button size="lg" variant="outline" asChild className="h-12 rounded-full border-white/30 bg-white/8 text-white hover:bg-white/14 hover:text-white">
+                <Button size="lg" variant="outline" asChild className="h-12 rounded-full border-white/30 bg-foreground/10 text-white hover:bg-foreground/20 hover:text-white">
                   <Link to="/results/lookup">{isEn ? 'Result lookup' : 'Tra cứu kết quả'}</Link>
                 </Button>
               </div>

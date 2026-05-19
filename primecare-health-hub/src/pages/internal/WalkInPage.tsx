@@ -23,13 +23,13 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useCreateWalkIn, useReceptionPatientSearch } from '@/hooks/use-reception-data';
+import { useOperationalDoctorOptions } from '@/hooks/use-admin-data';
 import {
   useAvailability,
   useBranchSpecialties,
   useBranches,
-  useDoctors,
 } from '@/hooks/use-public-data';
-import { buildArrivedOptions, buildSessionOptions } from '@/lib/filter-options';
+import { buildSessionOptions } from '@/lib/filter-options';
 import { toLocalDateInputValue } from '@/lib/date';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import type { Appointment, BranchSessionType, Patient } from '@/types/api';
@@ -56,7 +56,6 @@ export default function WalkInPage() {
     patientGender: '',
     patientAddress: '',
     patientNote: '',
-    arrived: 'true',
   });
   const [createdAppointment, setCreatedAppointment] = useState<Appointment | null>(null);
   const [patientSearch, setPatientSearch] = useState('');
@@ -71,15 +70,17 @@ export default function WalkInPage() {
     () =>
       shouldLoadDoctors
         ? {
-            size: '100',
             ...(form.branchId ? { branchId: form.branchId } : {}),
             ...(form.specialtyId ? { specialtyId: form.specialtyId } : {}),
           }
         : undefined,
     [form.branchId, form.specialtyId, shouldLoadDoctors],
   );
-  const { data: doctorsPage } = useDoctors(doctorParams);
-  const doctors = useMemo(() => doctorsPage?.items ?? [], [doctorsPage?.items]);
+  const {
+    data: doctors = [],
+    isError: isDoctorsError,
+    isLoading: isDoctorsLoading,
+  } = useOperationalDoctorOptions(doctorParams);
 
   useEffect(() => {
     if (!form.specialtyId) return;
@@ -103,7 +104,6 @@ export default function WalkInPage() {
   }, [doctors, form.doctorId]);
 
   const sessionOptions = useMemo(() => buildSessionOptions(t), [t]);
-  const arrivedOptions = useMemo(() => buildArrivedOptions(t), [t]);
 
   const availabilityParams = useMemo(
     () =>
@@ -172,10 +172,6 @@ export default function WalkInPage() {
     () => sessionOptions.find((item) => item.value === form.session)?.label || 'Chưa chọn',
     [form.session, sessionOptions],
   );
-  const selectedArrivedLabel = useMemo(
-    () => arrivedOptions.find((item) => item.value === form.arrived)?.label || 'Chưa chọn',
-    [arrivedOptions, form.arrived],
-  );
   const availableSlots = useMemo(
     () => slots.filter((slot) => slot.remainingSlots > 0),
     [slots],
@@ -187,6 +183,7 @@ export default function WalkInPage() {
       form.visitDate &&
       form.session &&
       form.slotStart &&
+      selectedDoctor &&
       form.patientFullName &&
       form.patientPhone,
   );
@@ -206,7 +203,7 @@ export default function WalkInPage() {
       patientDob: form.patientDob || undefined,
       patientGender: form.patientGender || undefined,
       patientNote: form.patientNote || undefined,
-      arrived: form.arrived === 'true',
+      arrived: true,
     });
 
     setCreatedAppointment(created);
@@ -226,7 +223,6 @@ export default function WalkInPage() {
       patientGender: '',
       patientAddress: '',
       patientNote: '',
-      arrived: 'true',
     });
   };
 
@@ -349,6 +345,15 @@ export default function WalkInPage() {
                       />
                     </SelectTrigger>
                     <SelectContent>
+                      {isDoctorsError ? (
+                        <SelectItem value="__doctor_options_error__" disabled>
+                          Không tải được danh sách bác sĩ
+                        </SelectItem>
+                      ) : !isDoctorsLoading && shouldLoadDoctors && doctors.length === 0 ? (
+                        <SelectItem value="__doctor_options_empty__" disabled>
+                          Không có bác sĩ sẵn sàng vận hành phù hợp.
+                        </SelectItem>
+                      ) : null}
                       {doctors.map((doctor) => (
                         <SelectItem key={doctor.id} value={doctor.id}>
                           {doctor.fullName}
@@ -356,6 +361,15 @@ export default function WalkInPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {isDoctorsError ? (
+                    <p className="mt-1 text-xs text-destructive">
+                      Không tải được danh sách bác sĩ. Vui lòng thử lại.
+                    </p>
+                  ) : !isDoctorsLoading && shouldLoadDoctors && doctors.length === 0 ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Không có bác sĩ sẵn sàng vận hành phù hợp.
+                    </p>
+                  ) : null}
                 </div>
 
                 <div>
@@ -372,7 +386,7 @@ export default function WalkInPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
                   <label className="mb-1.5 block text-sm font-medium">
                     {t('modules.doctorSchedules.session')} *
@@ -421,24 +435,6 @@ export default function WalkInPage() {
                       {availableSlots.map((slot) => (
                         <SelectItem key={slot.id} value={slot.slotStart}>
                           {slot.slotStart} - {slot.slotEnd}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium">
-                    {t('filters.walkInArrived.label')}
-                  </label>
-                  <Select value={form.arrived} onValueChange={(value) => set('arrived', value)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder={t('filters.walkInArrived.label')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {arrivedOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -609,12 +605,6 @@ export default function WalkInPage() {
               <SummaryRow label="Ngày khám" value={form.visitDate || 'Chưa chọn'} />
               <SummaryRow label="Buổi" value={selectedSessionLabel} />
               <SummaryRow label="Khung giờ" value={form.slotStart || 'Chưa chọn'} />
-              <div className="rounded-2xl border border-border/70 bg-muted/30 p-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Trạng thái đến khám
-                </p>
-                <Badge className="mt-2 w-fit rounded-full px-3 py-1">{selectedArrivedLabel}</Badge>
-              </div>
             </CardContent>
           </Card>
         </div>

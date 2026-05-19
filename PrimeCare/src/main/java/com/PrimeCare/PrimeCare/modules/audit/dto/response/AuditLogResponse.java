@@ -9,8 +9,10 @@ import java.time.LocalDateTime;
 @Builder
 public class AuditLogResponse {
     private Long id;
+    private String eventId;
     private Long actorId;
     private String actorName;
+    private String actorEmail;
     private String actorRole;
     private String action;
     private String entity;

@@ -112,7 +112,7 @@ public class EmailNotificationService {
                 InternalNotificationService.SEVERITY_CRITICAL,
                 "Job email thất bại",
                 "Gửi email " + templateCode + " thất bại. Vui lòng kiểm tra cấu hình SMTP hoặc hàng đợi.",
-                "/app/admin/notifications",
+                "/app/admin/dashboard",
                 entityType,
                 entityId,
                 metadata

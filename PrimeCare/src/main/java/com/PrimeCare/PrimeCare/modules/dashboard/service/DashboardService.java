@@ -2,10 +2,14 @@ package com.PrimeCare.PrimeCare.modules.dashboard.service;
 
 import com.PrimeCare.PrimeCare.modules.dashboard.dto.query.DashboardAggregateRow;
 import com.PrimeCare.PrimeCare.modules.dashboard.dto.query.DashboardBranchRevenueRow;
+import com.PrimeCare.PrimeCare.modules.dashboard.dto.query.DashboardDateRange;
 import com.PrimeCare.PrimeCare.modules.dashboard.dto.query.DashboardDoctorKpiRow;
 import com.PrimeCare.PrimeCare.modules.dashboard.dto.query.DashboardSpecialtyKpiRow;
 import com.PrimeCare.PrimeCare.modules.dashboard.dto.response.*;
 import com.PrimeCare.PrimeCare.modules.dashboard.repository.DashboardQueryRepository;
+import com.PrimeCare.PrimeCare.shared.exception.ApiException;
+import com.PrimeCare.PrimeCare.shared.exception.ErrorCode;
+import com.PrimeCare.PrimeCare.shared.utils.StringUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,31 +18,43 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
 public class DashboardService {
 
+    private static final DefaultDateRange DEFAULT_DATE_RANGE = DefaultDateRange.LAST_7_DAYS;
+
     private final DashboardQueryRepository dashboardQueryRepository;
 
     @Transactional(readOnly = true)
-    public DashboardOverviewResponse overview(String period, LocalDate fromDate, LocalDate toDate) {
-        DateRange range = resolveDateRange(period, fromDate, toDate);
-        LocalDateTime from = range.from().atStartOfDay();
-        LocalDateTime to = range.toDate().plusDays(1).atStartOfDay().minusNanos(1);
+    public DashboardOverviewResponse overview(String period, LocalDate fromDate, LocalDate toDate, Integer days) {
+        DashboardDateRange range = resolveDateRange(period, fromDate, toDate, days);
 
-        long totalAppointments = dashboardQueryRepository.countAppointmentsBetween(range.from(), range.toDate());
-        long arrivedAppointments = dashboardQueryRepository.countArrivedAppointmentsBetween(range.from(), range.toDate());
-        long checkedInAppointments = dashboardQueryRepository.countAppointmentsByStatusBetween(range.from(), range.toDate(), "CHECKED_IN");
-        long noShowAppointments = dashboardQueryRepository.countAppointmentsByStatusBetween(range.from(), range.toDate(), "NO_SHOW");
+        long totalAppointments = dashboardQueryRepository.countAppointmentsBetween(range.getFromDate(), range.getToDate());
+        long arrivedAppointments = dashboardQueryRepository.countArrivedAppointmentsBetween(range.getFromDate(), range.getToDate());
+        long checkedInAppointments = dashboardQueryRepository.countAppointmentsByStatusBetween(range.getFromDate(), range.getToDate(), "CHECKED_IN");
+        long noShowAppointments = dashboardQueryRepository.countAppointmentsByStatusBetween(range.getFromDate(), range.getToDate(), "NO_SHOW");
 
-        long totalEncounters = dashboardQueryRepository.countEncountersStartedBetween(from, to);
-        long inProgressEncounters = dashboardQueryRepository.countEncountersByStatusBetween("IN_PROGRESS", from, to);
+        long totalEncounters = dashboardQueryRepository.countEncountersStartedBetween(range.getFromDateTime(), range.getToDateTime());
+        long inProgressEncounters = dashboardQueryRepository.countEncountersByStatusBetween("IN_PROGRESS", range.getFromDateTime(), range.getToDateTime());
+        long uniquePatientsInRange = dashboardQueryRepository.countUniquePatientsBetween(
+                range.getFromDate(),
+                range.getToDate(),
+                range.getFromDateTime(),
+                range.getToDateTime()
+        );
 
-        long waitingServiceItems = dashboardQueryRepository.countServiceOrderItemsByStatusBetween("WAITING_EXECUTION", from, to);
-        long paidRevenue = dashboardQueryRepository.sumPaidRevenueBetween(from, to);
+        long waitingServiceItems = dashboardQueryRepository.countServiceOrderItemsByStatusBetween("WAITING_EXECUTION", range.getFromDateTime(), range.getToDateTime());
+        long grossPaidRevenue = dashboardQueryRepository.sumGrossPaidRevenueBetween(range.getFromDateTime(), range.getToDateTime());
+        long refundedAmountForPaidInvoices = dashboardQueryRepository.sumRefundedAmountForPaidInvoicesBetween(range.getFromDateTime(), range.getToDateTime());
+        long netPaidRevenue = dashboardQueryRepository.sumPaidRevenueBetween(range.getFromDateTime(), range.getToDateTime());
+        long refundsProcessed = dashboardQueryRepository.sumRefundsProcessedBetween(range.getFromDateTime(), range.getToDateTime());
 
         return DashboardOverviewResponse.builder()
+                                        .fromDate(range.getFromDate())
+                                        .toDate(range.getToDate())
                                         .today(DashboardTodaySummaryResponse.builder()
                                                                             .totalAppointments(totalAppointments)
                                                                             .arrivedAppointments(arrivedAppointments)
@@ -46,66 +62,53 @@ public class DashboardService {
                                                                             .noShowAppointments(noShowAppointments)
                                                                             .totalEncounters(totalEncounters)
                                                                             .inProgressEncounters(inProgressEncounters)
+                                                                            .uniquePatientsInRange(uniquePatientsInRange)
                                                                             .waitingServiceItems(waitingServiceItems)
-                                                                            .paidRevenue(paidRevenue)
+                                                                            .grossPaidRevenue(grossPaidRevenue)
+                                                                            .refundedAmountForPaidInvoices(refundedAmountForPaidInvoices)
+                                                                            .netPaidRevenue(netPaidRevenue)
+                                                                            .refundsProcessed(refundsProcessed)
+                                                                            .paidRevenue(netPaidRevenue)
                                                                             .build())
-                                        .appointmentSeries(buildAppointmentSeries(range.toDate(), 7))
-                                        .revenueSeries(buildRevenueSeries(range.toDate(), 7))
-                                        .noShowSeries(buildNoShowSeries(range.toDate(), 7))
+                                        .appointmentSeries(buildAppointmentSeries(range.getFromDate(), range.getToDate()))
+                                        .revenueSeries(buildRevenueSeries(range.getFromDate(), range.getToDate()))
+                                        .noShowSeries(buildNoShowSeries(range.getFromDate(), range.getToDate()))
                                         .build();
     }
 
-    private DateRange resolveDateRange(String period, LocalDate fromDate, LocalDate toDate) {
-        LocalDate today = LocalDate.now();
-        String normalizedPeriod = period == null ? "today" : period.trim().toLowerCase();
-
-        return switch (normalizedPeriod) {
-            case "month" -> new DateRange(today.withDayOfMonth(1), today);
-            case "year" -> new DateRange(today.withDayOfYear(1), today);
-            case "custom" -> {
-                LocalDate safeFrom = fromDate != null ? fromDate : today;
-                LocalDate safeTo = toDate != null ? toDate : safeFrom;
-                if (safeTo.isBefore(safeFrom)) {
-                    safeTo = safeFrom;
-                }
-                yield new DateRange(safeFrom, safeTo);
-            }
-            default -> new DateRange(today, today);
-        };
+    @Transactional(readOnly = true)
+    public DashboardOverviewResponse overview(String period, LocalDate fromDate, LocalDate toDate) {
+        return overview(period, fromDate, toDate, null);
     }
 
     @Transactional(readOnly = true)
-    public DashboardBreakdownResponse breakdown(int days, int topN) {
-        int safeDays = Math.max(days, 1);
+    public DashboardBreakdownResponse breakdown(String period, LocalDate fromDate, LocalDate toDate, Integer days, int topN) {
+        DashboardDateRange range = resolveDateRange(period, fromDate, toDate, days);
         int safeTopN = Math.max(topN, 1);
 
-        LocalDate toDate = LocalDate.now();
-        LocalDate fromDate = toDate.minusDays(safeDays - 1L);
-
-        LocalDateTime fromDateTime = fromDate.atStartOfDay();
-        LocalDateTime toDateTime = toDate.plusDays(1).atStartOfDay().minusNanos(1);
-
-        var branches = dashboardQueryRepository.appointmentByBranch(fromDate, toDate).stream()
+        var branches = dashboardQueryRepository.appointmentByBranch(range.getFromDate(), range.getToDate()).stream()
                                                .limit(safeTopN)
                                                .map(this::toBreakdownItem)
                                                .toList();
 
-        var specialties = dashboardQueryRepository.appointmentBySpecialty(fromDate, toDate).stream()
+        var specialties = dashboardQueryRepository.appointmentBySpecialty(range.getFromDate(), range.getToDate()).stream()
                                                   .limit(safeTopN)
                                                   .map(this::toBreakdownItem)
                                                   .toList();
 
-        var topDoctors = dashboardQueryRepository.topDoctors(fromDateTime, toDateTime).stream()
+        var topDoctors = dashboardQueryRepository.topDoctors(range.getFromDateTime(), range.getToDateTime()).stream()
                                                  .limit(safeTopN)
                                                  .map(this::toBreakdownItem)
                                                  .toList();
 
-        var topServices = dashboardQueryRepository.topServices(fromDateTime, toDateTime).stream()
+        var topServices = dashboardQueryRepository.topServices(range.getFromDateTime(), range.getToDateTime()).stream()
                                                   .limit(safeTopN)
                                                   .map(this::toBreakdownItem)
                                                   .toList();
 
         return DashboardBreakdownResponse.builder()
+                                         .fromDate(range.getFromDate())
+                                         .toDate(range.getToDate())
                                          .branches(branches)
                                          .specialties(specialties)
                                          .topDoctors(topDoctors)
@@ -114,43 +117,115 @@ public class DashboardService {
     }
 
     @Transactional(readOnly = true)
-    public DashboardKpiResponse kpis(int days, int topN) {
-        int safeDays = Math.max(days, 1);
+    public DashboardBreakdownResponse breakdown(int days, int topN) {
+        return breakdown(null, null, null, days, topN);
+    }
+
+    @Transactional(readOnly = true)
+    public DashboardKpiResponse kpis(String period, LocalDate fromDate, LocalDate toDate, Integer days, int topN) {
+        DashboardDateRange range = resolveDateRange(period, fromDate, toDate, days);
         int safeTopN = Math.max(topN, 1);
 
-        LocalDate toDate = LocalDate.now();
-        LocalDate fromDate = toDate.minusDays(safeDays - 1L);
-
-        LocalDateTime fromDateTime = fromDate.atStartOfDay();
-        LocalDateTime toDateTime = toDate.plusDays(1).atStartOfDay().minusNanos(1);
-
-        var doctorKpis = dashboardQueryRepository.doctorKpis(fromDate, toDate).stream()
+        var doctorKpis = dashboardQueryRepository.doctorKpis(range.getFromDate(), range.getToDate()).stream()
                                                  .limit(safeTopN)
                                                  .map(this::toDoctorKpi)
                                                  .toList();
 
-        var specialtyKpis = dashboardQueryRepository.specialtyKpis(fromDate, toDate).stream()
+        var specialtyKpis = dashboardQueryRepository.specialtyKpis(range.getFromDate(), range.getToDate()).stream()
                                                     .limit(safeTopN)
                                                     .map(this::toSpecialtyKpi)
                                                     .toList();
 
-        var branchRevenue = dashboardQueryRepository.revenueByBranch(fromDateTime, toDateTime).stream()
+        var branchRevenue = dashboardQueryRepository.revenueByBranch(range.getFromDateTime(), range.getToDateTime()).stream()
                                                     .limit(safeTopN)
                                                     .map(this::toBranchRevenue)
                                                     .toList();
 
         return DashboardKpiResponse.builder()
+                                   .fromDate(range.getFromDate())
+                                   .toDate(range.getToDate())
                                    .doctorKpis(doctorKpis)
                                    .specialtyKpis(specialtyKpis)
                                    .branchRevenue(branchRevenue)
                                    .build();
     }
 
-    private List<DashboardDailyMetricPointResponse> buildAppointmentSeries(LocalDate endDate, int days) {
-        List<DashboardDailyMetricPointResponse> result = new ArrayList<>();
-        LocalDate start = endDate.minusDays(days - 1L);
+    @Transactional(readOnly = true)
+    public DashboardKpiResponse kpis(int days, int topN) {
+        return kpis(null, null, null, days, topN);
+    }
 
-        for (LocalDate d = start; !d.isAfter(endDate); d = d.plusDays(1)) {
+    private DashboardDateRange resolveDateRange(
+            String period,
+            LocalDate fromDate,
+            LocalDate toDate,
+            Integer days
+    ) {
+        if (fromDate != null || toDate != null) {
+            if (fromDate == null || toDate == null) {
+                throw new ApiException(ErrorCode.INVALID_REQUEST, "fromDate and toDate must be provided together.");
+            }
+            return buildDateRange(fromDate, toDate);
+        }
+
+        String normalizedPeriod = StringUtil.trimToNull(period);
+        if (normalizedPeriod != null) {
+            if (days != null) {
+                throw new ApiException(ErrorCode.INVALID_REQUEST, "Use either period or days, not both.");
+            }
+            return resolvePeriod(normalizedPeriod);
+        }
+
+        if (days != null) {
+            return resolveDays(days);
+        }
+
+        return switch (DEFAULT_DATE_RANGE) {
+            case TODAY -> resolvePeriod("today");
+            case LAST_7_DAYS -> resolveDays(7);
+        };
+    }
+
+    private DashboardDateRange resolvePeriod(String period) {
+        LocalDate today = LocalDate.now();
+        String normalizedPeriod = period.trim().toLowerCase(Locale.ROOT);
+
+        return switch (normalizedPeriod) {
+            case "today" -> buildDateRange(today, today);
+            case "month" -> buildDateRange(today.withDayOfMonth(1), today);
+            case "year" -> buildDateRange(today.withDayOfYear(1), today);
+            case "custom" -> throw new ApiException(
+                    ErrorCode.INVALID_REQUEST,
+                    "fromDate and toDate are required when period is custom."
+            );
+            default -> throw new ApiException(ErrorCode.INVALID_REQUEST, "Invalid dashboard period.");
+        };
+    }
+
+    private DashboardDateRange resolveDays(int days) {
+        int safeDays = Math.max(days, 1);
+        LocalDate toDate = LocalDate.now();
+        LocalDate fromDate = toDate.minusDays(safeDays - 1L);
+        return buildDateRange(fromDate, toDate);
+    }
+
+    private DashboardDateRange buildDateRange(LocalDate fromDate, LocalDate toDate) {
+        if (toDate.isBefore(fromDate)) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "fromDate must be before or equal to toDate.");
+        }
+
+        return DashboardDateRange.builder()
+                                 .fromDate(fromDate)
+                                 .toDate(toDate)
+                                 .fromDateTime(fromDate.atStartOfDay())
+                                 .toDateTime(toDate.plusDays(1).atStartOfDay().minusNanos(1))
+                                 .build();
+    }
+
+    private List<DashboardDailyMetricPointResponse> buildAppointmentSeries(LocalDate startDate, LocalDate endDate) {
+        List<DashboardDailyMetricPointResponse> result = new ArrayList<>();
+
+        for (LocalDate d = startDate; !d.isAfter(endDate); d = d.plusDays(1)) {
             long value = dashboardQueryRepository.countAppointmentsOnDate(d);
             result.add(DashboardDailyMetricPointResponse.builder()
                                                         .date(d.toString())
@@ -161,11 +236,10 @@ public class DashboardService {
         return result;
     }
 
-    private List<DashboardDailyMetricPointResponse> buildNoShowSeries(LocalDate endDate, int days) {
+    private List<DashboardDailyMetricPointResponse> buildNoShowSeries(LocalDate startDate, LocalDate endDate) {
         List<DashboardDailyMetricPointResponse> result = new ArrayList<>();
-        LocalDate start = endDate.minusDays(days - 1L);
 
-        for (LocalDate d = start; !d.isAfter(endDate); d = d.plusDays(1)) {
+        for (LocalDate d = startDate; !d.isAfter(endDate); d = d.plusDays(1)) {
             long value = dashboardQueryRepository.countAppointmentsByStatusOnDate(d, "NO_SHOW");
             result.add(DashboardDailyMetricPointResponse.builder()
                                                         .date(d.toString())
@@ -176,11 +250,10 @@ public class DashboardService {
         return result;
     }
 
-    private List<DashboardDailyMetricPointResponse> buildRevenueSeries(LocalDate endDate, int days) {
+    private List<DashboardDailyMetricPointResponse> buildRevenueSeries(LocalDate startDate, LocalDate endDate) {
         List<DashboardDailyMetricPointResponse> result = new ArrayList<>();
-        LocalDate start = endDate.minusDays(days - 1L);
 
-        for (LocalDate d = start; !d.isAfter(endDate); d = d.plusDays(1)) {
+        for (LocalDate d = startDate; !d.isAfter(endDate); d = d.plusDays(1)) {
             LocalDateTime from = d.atStartOfDay();
             LocalDateTime to = d.plusDays(1).atStartOfDay().minusNanos(1);
 
@@ -242,6 +315,7 @@ public class DashboardService {
         return DashboardBranchRevenueResponse.builder()
                                              .branchId(row.getBranchId())
                                              .branchName(row.getBranchName())
+                                             .netPaidRevenue(row.getPaidRevenue() != null ? row.getPaidRevenue() : 0L)
                                              .paidRevenue(row.getPaidRevenue() != null ? row.getPaidRevenue() : 0L)
                                              .build();
     }
@@ -250,6 +324,8 @@ public class DashboardService {
         return Math.round(value * 100.0) / 100.0;
     }
 
-
-    private record DateRange(LocalDate from, LocalDate toDate) {}
+    private enum DefaultDateRange {
+        TODAY,
+        LAST_7_DAYS
+    }
 }

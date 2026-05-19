@@ -35,6 +35,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { statusTextClasses } from '@/lib/status-style-classes';
 import {
   useCancelDoctorLeaveRequest,
   useCreateDoctorLeaveRequest,
@@ -181,9 +182,9 @@ export default function LeaveRequestsPage() {
 
       <div className="grid gap-4 md:grid-cols-4">
         <StatCard icon={CalendarDays} label={isEn ? 'Leave days planned' : 'Ngày nghỉ đã lên kế hoạch'} value={stats.totalDays} tone="text-primary" />
-        <StatCard icon={Clock3} label={isEn ? 'Pending requests' : 'Đơn chờ duyệt'} value={stats.PENDING} tone="text-violet-600" />
-        <StatCard icon={ShieldCheck} label={isEn ? 'Approved requests' : 'Đơn đã duyệt'} value={stats.APPROVED} tone="text-rose-600" />
-        <StatCard icon={XCircle} label={isEn ? 'Rejected / cancelled' : 'Đơn từ chối / đã hủy'} value={stats.REJECTED + stats.CANCELLED} tone="text-slate-600" />
+        <StatCard icon={Clock3} label={isEn ? 'Pending requests' : 'Đơn chờ duyệt'} value={stats.PENDING} tone={statusTextClasses.warning} />
+        <StatCard icon={ShieldCheck} label={isEn ? 'Approved requests' : 'Đơn đã duyệt'} value={stats.APPROVED} tone={statusTextClasses.success} />
+        <StatCard icon={XCircle} label={isEn ? 'Rejected / cancelled' : 'Đơn từ chối / đã hủy'} value={stats.REJECTED + stats.CANCELLED} tone={statusTextClasses.destructive} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_380px]">

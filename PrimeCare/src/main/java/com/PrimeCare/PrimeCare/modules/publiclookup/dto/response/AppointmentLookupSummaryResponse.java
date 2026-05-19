@@ -17,4 +17,6 @@ public class AppointmentLookupSummaryResponse {
     private String slotRange;
     private Integer queueNo;
     private Boolean pdfReady;
+    private Boolean canCancel;
+    private String cancelBlockedReason;
 }

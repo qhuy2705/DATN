@@ -28,11 +28,11 @@ public class InvoiceStatusHistory extends BaseEntity {
     private Invoice invoice;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "from_status", length = 16)
+    @Column(name = "from_status", length = 32)
     private PaymentStatus fromStatus;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "to_status", nullable = false, length = 16)
+    @Column(name = "to_status", nullable = false, length = 32)
     private PaymentStatus toStatus;
 
     @ManyToOne(fetch = FetchType.LAZY)

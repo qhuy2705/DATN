@@ -218,8 +218,8 @@ export default function MedicationsPage() {
                   onClick={() => setStatusTarget(r)}
                   className={`h-9 w-9 rounded-xl border-border/70 bg-background hover:bg-muted ${
                     r.status === 'ACTIVE'
-                      ? 'text-amber-600 hover:text-amber-700'
-                      : 'text-emerald-600 hover:text-emerald-700'
+                      ? 'text-warning hover:text-warning'
+                      : 'text-success hover:text-success'
                   }`}
                 >
                   {r.status === 'ACTIVE' ? (

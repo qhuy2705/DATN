@@ -5,39 +5,57 @@ import com.PrimeCare.PrimeCare.modules.appointment.entity.Appointment;
 import com.PrimeCare.PrimeCare.modules.auth.entity.User;
 import com.PrimeCare.PrimeCare.modules.auth.repository.UserRepository;
 import com.PrimeCare.PrimeCare.modules.billing.dto.request.BankTransferTransactionRequest;
+import com.PrimeCare.PrimeCare.modules.billing.dto.request.ChangeInvoicePaymentMethodRequest;
 import com.PrimeCare.PrimeCare.modules.billing.dto.request.PayInvoiceRequest;
+import com.PrimeCare.PrimeCare.modules.billing.dto.request.RefundInvoiceItemsRequest;
 import com.PrimeCare.PrimeCare.modules.billing.dto.response.CashierSummaryResponse;
 import com.PrimeCare.PrimeCare.modules.billing.dto.response.InvoiceResponse;
 import com.PrimeCare.PrimeCare.modules.billing.dto.response.PaymentApplyResult;
+import com.PrimeCare.PrimeCare.modules.billing.dto.response.RefundableInvoiceItemResponse;
+import com.PrimeCare.PrimeCare.modules.billing.dto.response.RefundableInvoiceItemsResponse;
 import com.PrimeCare.PrimeCare.modules.billing.entity.BankTransaction;
 import com.PrimeCare.PrimeCare.modules.billing.entity.Invoice;
 import com.PrimeCare.PrimeCare.modules.billing.entity.InvoiceItem;
 import com.PrimeCare.PrimeCare.modules.billing.entity.PaymentIntent;
 import com.PrimeCare.PrimeCare.modules.billing.entity.RefundRecord;
+import com.PrimeCare.PrimeCare.modules.billing.entity.RefundRecordItem;
 import com.PrimeCare.PrimeCare.modules.billing.repository.BankTransactionRepository;
 import com.PrimeCare.PrimeCare.modules.billing.repository.InvoiceRepository;
 import com.PrimeCare.PrimeCare.modules.billing.repository.PaymentIntentRepository;
+import com.PrimeCare.PrimeCare.modules.billing.repository.RefundRecordItemRepository;
 import com.PrimeCare.PrimeCare.modules.billing.repository.RefundRecordRepository;
 import com.PrimeCare.PrimeCare.modules.encounter.service.EncounterWorkflowService;
 import com.PrimeCare.PrimeCare.modules.notification.service.InternalNotificationService;
+import com.PrimeCare.PrimeCare.modules.prescription.entity.Prescription;
+import com.PrimeCare.PrimeCare.modules.prescription.entity.PrescriptionItem;
+import com.PrimeCare.PrimeCare.modules.prescription.repository.PrescriptionItemRepository;
+import com.PrimeCare.PrimeCare.modules.prescription.repository.PrescriptionRepository;
 import com.PrimeCare.PrimeCare.modules.realtime.service.AfterCommitExecutor;
 import com.PrimeCare.PrimeCare.modules.realtime.service.RealtimeEventPublisher;
+import com.PrimeCare.PrimeCare.modules.service_result.entity.ServiceResult;
+import com.PrimeCare.PrimeCare.modules.service_result.repository.ServiceResultRepository;
 import com.PrimeCare.PrimeCare.modules.service_order.dto.response.CashierServiceOrderResponse;
 import com.PrimeCare.PrimeCare.modules.service_order.dto.response.ServiceOrderItemResponse;
 import com.PrimeCare.PrimeCare.modules.service_order.entity.ServiceOrder;
 import com.PrimeCare.PrimeCare.modules.service_order.entity.ServiceOrderItem;
+import com.PrimeCare.PrimeCare.modules.service_order.repository.ServiceOrderItemRepository;
 import com.PrimeCare.PrimeCare.modules.service_order.repository.ServiceOrderRepository;
 import com.PrimeCare.PrimeCare.modules.service_order.service.DepartmentQueueAllocator;
 import com.PrimeCare.PrimeCare.shared.common.PageResponse;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentStatus;
 import com.PrimeCare.PrimeCare.shared.enums.BankTransactionStatus;
 import com.PrimeCare.PrimeCare.shared.enums.EncounterStatus;
+import com.PrimeCare.PrimeCare.shared.enums.InvoiceItemRefundStatus;
+import com.PrimeCare.PrimeCare.shared.enums.InvoiceItemSourceType;
 import com.PrimeCare.PrimeCare.shared.enums.PaymentIntentProvider;
 import com.PrimeCare.PrimeCare.shared.enums.PaymentIntentStatus;
 import com.PrimeCare.PrimeCare.shared.enums.PaymentMethod;
 import com.PrimeCare.PrimeCare.shared.enums.PaymentStatus;
+import com.PrimeCare.PrimeCare.shared.enums.PrescriptionItemStatus;
+import com.PrimeCare.PrimeCare.shared.enums.PrescriptionStatus;
 import com.PrimeCare.PrimeCare.shared.enums.ServiceOrderItemStatus;
 import com.PrimeCare.PrimeCare.shared.enums.ServiceOrderStatus;
+import com.PrimeCare.PrimeCare.shared.enums.ServiceResultStatus;
 import com.PrimeCare.PrimeCare.shared.enums.UserRole;
 import com.PrimeCare.PrimeCare.shared.exception.ApiException;
 import com.PrimeCare.PrimeCare.shared.exception.ErrorCode;
@@ -55,11 +73,13 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -81,8 +101,13 @@ public class BillingService {
     private final AuditLogService auditLogService;
     private final InvoiceStatusHistoryService invoiceStatusHistoryService;
     private final RefundRecordRepository refundRecordRepository;
+    private final RefundRecordItemRepository refundRecordItemRepository;
     private final EncounterWorkflowService encounterWorkflowService;
     private final InternalNotificationService internalNotificationService;
+    private final PrescriptionRepository prescriptionRepository;
+    private final PrescriptionItemRepository prescriptionItemRepository;
+    private final ServiceOrderItemRepository serviceOrderItemRepository;
+    private final ServiceResultRepository serviceResultRepository;
 
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -171,14 +196,32 @@ public class BillingService {
         var invoiceSummary = invoiceRepository.summarizeCashierInvoices(fromTime, toTime);
         var orderSummary = orderRepository.summarizeCashierServiceOrders(fromTime, toTime);
 
+        long invoicesCreatedInRange = invoiceSummary != null ? invoiceSummary.getInvoicesCreatedInRange() : 0;
+        long unpaidInvoiceCount = invoiceSummary != null ? invoiceSummary.getUnpaidInvoiceCount() : 0;
+        long pendingConfirmationInvoiceCount = invoiceSummary != null ? invoiceSummary.getPendingConfirmationInvoiceCount() : 0;
+        long paymentReviewInvoiceCount = invoiceSummary != null ? invoiceSummary.getPaymentReviewInvoiceCount() : 0;
+        long paidInvoicesInRange = invoiceSummary != null ? invoiceSummary.getPaidInvoicesInRange() : 0;
+        long grossPaidRevenueInRange = invoiceSummary != null ? invoiceSummary.getGrossPaidRevenueInRange() : 0;
+        long refundedAmountForPaidInvoicesInRange = invoiceSummary != null ? invoiceSummary.getRefundedAmountForPaidInvoicesInRange() : 0;
+        long netPaidRevenueInRange = invoiceSummary != null ? invoiceSummary.getNetPaidRevenueInRange() : 0;
+        long refundsProcessedInRange = invoiceSummary != null ? invoiceSummary.getRefundsProcessedInRange() : 0;
+
         CashierSummaryResponse response = CashierSummaryResponse.builder()
-                .invoiceCount(invoiceSummary != null ? invoiceSummary.getInvoiceCount() : 0)
-                .unpaidInvoiceCount(invoiceSummary != null ? invoiceSummary.getUnpaidInvoiceCount() : 0)
-                .pendingConfirmationInvoiceCount(invoiceSummary != null ? invoiceSummary.getPendingConfirmationInvoiceCount() : 0)
-                .paymentReviewInvoiceCount(invoiceSummary != null ? invoiceSummary.getPaymentReviewInvoiceCount() : 0)
-                .paidInvoiceCount(invoiceSummary != null ? invoiceSummary.getPaidInvoiceCount() : 0)
+                .invoicesCreatedInRange(invoicesCreatedInRange)
+                .invoiceCount(invoicesCreatedInRange)
+                .pendingInvoices(unpaidInvoiceCount + pendingConfirmationInvoiceCount + paymentReviewInvoiceCount)
+                .unpaidInvoiceCount(unpaidInvoiceCount)
+                .pendingConfirmationInvoiceCount(pendingConfirmationInvoiceCount)
+                .paymentReviewInvoiceCount(paymentReviewInvoiceCount)
+                .paidInvoicesInRange(paidInvoicesInRange)
+                .paidInvoiceCount(paidInvoicesInRange)
                 .refundedInvoiceCount(invoiceSummary != null ? invoiceSummary.getRefundedInvoiceCount() : 0)
-                .paidRevenue(invoiceSummary != null ? invoiceSummary.getPaidRevenue() : 0)
+                .grossPaidRevenueInRange(grossPaidRevenueInRange)
+                .refundedAmountForPaidInvoicesInRange(refundedAmountForPaidInvoicesInRange)
+                .netPaidRevenueInRange(netPaidRevenueInRange)
+                .refundsProcessedInRange(refundsProcessedInRange)
+                .paidRevenueInRange(netPaidRevenueInRange)
+                .paidRevenue(netPaidRevenueInRange)
                 .serviceOrderCount(orderSummary != null ? orderSummary.getServiceOrderCount() : 0)
                 .uninvoicedServiceOrderCount(orderSummary != null ? orderSummary.getUninvoicedServiceOrderCount() : 0)
                 .unpaidServiceOrderCount(orderSummary != null ? orderSummary.getUnpaidServiceOrderCount() : 0)
@@ -192,6 +235,55 @@ public class BillingService {
         Invoice invoice = invoiceRepository.findById(invoiceId)
                                            .orElseThrow(() -> new ApiException(ErrorCode.INVOICE_NOT_FOUND));
         return toResponse(invoice, true);
+    }
+
+    @Transactional(readOnly = true)
+    public RefundableInvoiceItemsResponse getRefundableItems(Long invoiceId) {
+        Invoice invoice = invoiceRepository.findById(invoiceId)
+                .orElseThrow(() -> new ApiException(ErrorCode.INVOICE_NOT_FOUND));
+
+        List<RefundableInvoiceItemResponse> items = invoice.getItems() != null
+                ? invoice.getItems().stream()
+                .map(item -> evaluateRefundableItem(invoice, item, false).toResponse())
+                .toList()
+                : List.of();
+
+        long refundedAmount = refundedAmount(invoice);
+        return RefundableInvoiceItemsResponse.builder()
+                .invoiceId(invoice.getId())
+                .invoiceCode(invoice.getCode())
+                .paymentStatus(invoice.getPaymentStatus())
+                .totalAmount(invoice.getTotalAmount())
+                .refundedAmount(refundedAmount)
+                .remainingAmount(remainingAmount(invoice, refundedAmount))
+                .items(items)
+                .build();
+    }
+
+    @Transactional
+    public InvoiceResponse refundInvoiceItems(Long invoiceId, RefundInvoiceItemsRequest request, Long cashierUserId) {
+        String reason = optionalText(request != null ? request.getReason() : null, null);
+        if (reason == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Lý do hoàn tiền không được để trống");
+        }
+        if (request == null || request.getItems() == null || request.getItems().isEmpty()) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Danh sách mục hoàn tiền không được để trống");
+        }
+
+        List<Long> requestedItemIds = request.getItems().stream()
+                .map(RefundInvoiceItemsRequest.Item::getInvoiceItemId)
+                .toList();
+        if (requestedItemIds.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Mục hoàn tiền không hợp lệ");
+        }
+        Set<Long> uniqueItemIds = new LinkedHashSet<>(requestedItemIds);
+        if (uniqueItemIds.size() != requestedItemIds.size()) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Danh sách mục hoàn tiền bị trùng");
+        }
+
+        Invoice invoice = invoiceRepository.findWithLockById(invoiceId)
+                .orElseThrow(() -> new ApiException(ErrorCode.INVOICE_NOT_FOUND));
+        return refundInvoiceItemsInternal(invoice, uniqueItemIds, reason, cashierUserId, "Selected invoice item refund");
     }
 
     @Transactional
@@ -226,6 +318,8 @@ public class BillingService {
             InvoiceItem invoiceItem = InvoiceItem.builder()
                     .referenceType(InvoiceItem.ReferenceType.CLINICAL_SERVICE)
                     .referenceId(orderItem.getMedicalService().getId())
+                    .sourceItemType(InvoiceItemSourceType.SERVICE_ORDER_ITEM)
+                    .sourceItemId(orderItem.getId())
                     .nameSnapshot(orderItem.getServiceNameVnSnapshot())
                     .unitPrice(orderItem.getPriceSnapshot())
                     .quantity(orderItem.getQuantity())
@@ -279,7 +373,7 @@ public class BillingService {
         }
 
         invoiceStatusHistoryService.record(saved, null, saved.getPaymentStatus(), cashier, "Invoice created");
-        auditLogService.log(cashier, "CREATE", "INVOICE", saved.getId(), null, snapshotInvoice(saved));
+        auditLogService.log(cashier, "CREATE_INVOICE", "INVOICE", saved.getId(), null, snapshotInvoice(saved));
         publishInvoiceCreatedRealtime(saved);
 
         return toResponse(saved, true);
@@ -296,6 +390,22 @@ public class BillingService {
         if (invoice.getPaymentStatus() == PaymentStatus.PAID) {
             return toResponse(invoice, true);
         }
+        if (invoice.getPaymentStatus() == PaymentStatus.PARTIALLY_REFUNDED) {
+            throw new ApiException(ErrorCode.INVOICE_INVALID_STATUS, "Hóa đơn đã hoàn tiền một phần, không thể xác nhận thanh toán lại");
+        }
+
+        if (invoice.getPaymentMethod() == PaymentMethod.BANK_TRANSFER) {
+            throw new ApiException(
+                    ErrorCode.INVOICE_INVALID_STATUS,
+                    "Hóa đơn chuyển khoản cần xác nhận qua luồng đối soát"
+            );
+        }
+        if (invoice.getPaymentMethod() == PaymentMethod.VNPAY) {
+            throw new ApiException(
+                    ErrorCode.INVOICE_INVALID_STATUS,
+                    "Hóa đơn VNPAY chỉ được xác nhận qua callback/IPN hợp lệ"
+            );
+        }
 
         Map<String, Object> before = snapshotInvoice(invoice);
         var previousPaymentStatus = invoice.getPaymentStatus();
@@ -310,7 +420,7 @@ public class BillingService {
             upsertPaymentIntent(saved, null, PaymentIntentStatus.CONFIRMED, LocalDateTime.now(), null);
         }
 
-        auditLogService.log(cashier, "MARK_PAID", "INVOICE", saved.getId(), before, snapshotInvoice(saved));
+        auditLogService.log(cashier, "MARK_INVOICE_PAID", "INVOICE", saved.getId(), before, snapshotInvoice(saved));
         publishPaidRealtime(saved);
 
         return toResponse(saved, true);
@@ -318,7 +428,89 @@ public class BillingService {
 
     @Transactional
     public InvoiceResponse markPaidFromVnpay(String txnRef) {
-        return confirmVnpayPayment(txnRef, null, null, null).invoice();
+        throw new ApiException(
+                ErrorCode.INVOICE_INVALID_STATUS,
+                "Hóa đơn VNPAY chỉ được xác nhận qua callback/IPN hợp lệ"
+        );
+    }
+
+    @Transactional
+    public InvoiceResponse changeInvoicePaymentMethod(
+            Long invoiceId,
+            Long cashierUserId,
+            ChangeInvoicePaymentMethodRequest req
+    ) {
+        PaymentMethod newPaymentMethod = req != null ? req.getPaymentMethod() : null;
+        if (newPaymentMethod == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Payment method is required.");
+        }
+        if (!isChangeablePaymentMethod(newPaymentMethod)) {
+            throw new ApiException(
+                    ErrorCode.VALIDATION_ERROR,
+                    "Payment method must be one of CASH, BANK_TRANSFER, VNPAY"
+            );
+        }
+
+        Invoice invoice = invoiceRepository.findWithLockById(invoiceId)
+                .orElseThrow(() -> new ApiException(ErrorCode.INVOICE_NOT_FOUND));
+
+        if (invoice.getPaymentMethod() == newPaymentMethod) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "Payment method is already selected.");
+        }
+
+        validatePaymentMethodChangeAllowed(invoice);
+
+        User cashier = userRepository.findById(cashierUserId)
+                .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED));
+
+        Map<String, Object> before = snapshotPaymentMethodChangeBefore(invoice);
+        PaymentStatus previousStatus = invoice.getPaymentStatus();
+
+        var vnpayInit = newPaymentMethod == PaymentMethod.VNPAY
+                ? vnpayPaymentService.init(invoice.getCode(), invoice.getTotalAmount(), req.getReturnUrl())
+                : null;
+
+        cancelPendingPaymentIntent(invoice.getId());
+        clearBankTransferArtifacts(invoice);
+        clearVnpayArtifacts(invoice);
+        invoice.setPaidAt(null);
+        invoice.setPaymentMethod(newPaymentMethod);
+
+        if (newPaymentMethod == PaymentMethod.CASH) {
+            invoice.setPaymentStatus(PaymentStatus.UNPAID);
+        } else if (newPaymentMethod == PaymentMethod.BANK_TRANSFER) {
+            invoice.setPaymentStatus(PaymentStatus.PENDING_CONFIRMATION);
+            invoice.setPaymentReference(generatePaymentReference());
+            invoice.setTransferContent(billingQrService.buildPaymentContent(invoice));
+        } else if (newPaymentMethod == PaymentMethod.VNPAY) {
+            invoice.setPaymentStatus(PaymentStatus.UNPAID);
+            invoice.setVnpTxnRef(vnpayInit.txnRef());
+            invoice.setVnpPaymentUrl(vnpayInit.paymentUrl());
+        }
+
+        Invoice saved = invoiceRepository.save(invoice);
+        if (saved.getPaymentMethod() == PaymentMethod.BANK_TRANSFER) {
+            upsertPaymentIntent(saved, null, PaymentIntentStatus.PENDING, null, null);
+        }
+
+        invoiceStatusHistoryService.record(
+                saved,
+                previousStatus,
+                saved.getPaymentStatus(),
+                cashier,
+                "Invoice payment method changed"
+        );
+        auditLogService.log(
+                cashier,
+                "CHANGE_INVOICE_PAYMENT_METHOD",
+                "INVOICE",
+                saved.getId(),
+                before,
+                snapshotPaymentMethodChangeAfter(saved)
+        );
+        publishInvoicePaymentMethodChangedRealtime(saved);
+
+        return toResponse(saved, true);
     }
 
     @Transactional
@@ -330,22 +522,30 @@ public class BillingService {
             throw new ApiException(ErrorCode.INVOICE_INVALID_STATUS, "Hóa đơn này không sử dụng VNPAY");
         }
 
-        if (paidAmount != null && invoice.getTotalAmount() != null && !invoice.getTotalAmount().equals(paidAmount)) {
+        if (paidAmount == null) {
+            throw new ApiException(ErrorCode.INVOICE_INVALID_STATUS, "Thiếu số tiền thanh toán VNPAY");
+        }
+
+        if (invoice.getTotalAmount() != null && !invoice.getTotalAmount().equals(paidAmount)) {
             throw new ApiException(ErrorCode.INVOICE_INVALID_STATUS, "Số tiền thanh toán VNPAY không khớp hóa đơn");
         }
 
         if (invoice.getPaymentStatus() == PaymentStatus.PAID) {
             return new PaymentApplyResult(toResponse(invoice, true), true);
         }
+        if (invoice.getPaymentStatus() == PaymentStatus.PARTIALLY_REFUNDED) {
+            throw new ApiException(ErrorCode.INVOICE_INVALID_STATUS, "Hóa đơn đã hoàn tiền một phần, không thể xác nhận thanh toán lại");
+        }
 
         Map<String, Object> before = snapshotInvoice(invoice);
         var previousPaymentStatus = invoice.getPaymentStatus();
-        applyPaidState(invoice, LocalDateTime.now());
+        LocalDateTime paidTime = parseVnpayPayDate(payDate).orElseGet(LocalDateTime::now);
+        applyPaidState(invoice, paidTime);
         enrichVnpayNote(invoice, transactionNo, payDate);
         Invoice saved = invoiceRepository.save(invoice);
-        invoiceStatusHistoryService.record(saved, previousPaymentStatus, saved.getPaymentStatus(), null, "VNPay payment confirmed");
+        invoiceStatusHistoryService.record(saved, previousPaymentStatus, saved.getPaymentStatus(), null, "VNPAY payment confirmed");
 
-        auditLogService.log(null, "MARK_PAID_VNPAY", "INVOICE", saved.getId(), before, snapshotInvoice(saved));
+        auditLogService.log(null, "MARK_INVOICE_PAID", "INVOICE", saved.getId(), before, snapshotInvoice(saved));
         publishPaidRealtime(saved);
 
         return new PaymentApplyResult(toResponse(saved, true), false);
@@ -525,6 +725,9 @@ public class BillingService {
         if (invoice.getPaymentStatus() == PaymentStatus.PAID) {
             return toResponse(invoice, true);
         }
+        if (invoice.getPaymentStatus() == PaymentStatus.PARTIALLY_REFUNDED) {
+            throw new ApiException(ErrorCode.INVOICE_INVALID_STATUS, "Hóa đơn đã hoàn tiền một phần, không thể xác nhận thanh toán lại");
+        }
 
         User cashier = null;
         if (cashierUserId != null) {
@@ -592,16 +795,433 @@ public class BillingService {
                 "INVOICE",
                 invoice.getId()
         );
-        internalNotificationService.notifyRole(
-                UserRole.OPERATIONS_ADMIN,
-                "PAYMENT_REVIEW_REQUIRED",
-                InternalNotificationService.SEVERITY_WARNING,
-                "Webhook thanh toán cần kiểm tra",
-                message,
-                "/app/cashier/invoices",
-                "INVOICE",
-                invoice.getId()
+    }
+
+    private boolean isChangeablePaymentMethod(PaymentMethod paymentMethod) {
+        return paymentMethod == PaymentMethod.CASH
+                || paymentMethod == PaymentMethod.BANK_TRANSFER
+                || paymentMethod == PaymentMethod.VNPAY;
+    }
+
+    private void validatePaymentMethodChangeAllowed(Invoice invoice) {
+        if (invoice == null || invoice.getPaymentStatus() == null) {
+            throwPaymentMethodChangeNotAllowed();
+        }
+
+        if (hasPaymentDetectionMarkers(invoice)
+                || hasUnsafePaymentIntent(invoice)
+                || hasMatchedBankTransaction(invoice)) {
+            throwPaymentMethodChangeNotAllowed();
+        }
+
+        if (invoice.getPaymentStatus() == PaymentStatus.UNPAID) {
+            return;
+        }
+
+        if (invoice.getPaymentStatus() == PaymentStatus.PENDING_CONFIRMATION
+                && invoice.getPaymentMethod() == PaymentMethod.BANK_TRANSFER) {
+            return;
+        }
+
+        throwPaymentMethodChangeNotAllowed();
+    }
+
+    private boolean hasPaymentDetectionMarkers(Invoice invoice) {
+        return invoice.getPaidAt() != null
+                || invoice.getPaymentDetectedAt() != null
+                || optionalText(invoice.getPaymentReviewReason(), null) != null;
+    }
+
+    private boolean hasUnsafePaymentIntent(Invoice invoice) {
+        if (invoice.getId() == null) {
+            return false;
+        }
+        return paymentIntentRepository.findWithLockByInvoice_Id(invoice.getId())
+                .map(intent -> intent.getStatus() == PaymentIntentStatus.DETECTED
+                        || intent.getStatus() == PaymentIntentStatus.CONFIRMED
+                        || intent.getStatus() == PaymentIntentStatus.REVIEW
+                        || intent.getDetectedAt() != null
+                        || intent.getConfirmedAt() != null
+                        || optionalText(intent.getMatchedTransactionRef(), null) != null)
+                .orElse(false);
+    }
+
+    private boolean hasMatchedBankTransaction(Invoice invoice) {
+        return invoice.getId() != null
+                && bankTransactionRepository.existsByMatchedInvoice_IdAndStatusIn(
+                        invoice.getId(),
+                        List.of(
+                                BankTransactionStatus.RECEIVED,
+                                BankTransactionStatus.MATCHED,
+                                BankTransactionStatus.REVIEW
+                        )
+                );
+    }
+
+    private void throwPaymentMethodChangeNotAllowed() {
+        throw new ApiException(
+                ErrorCode.INVOICE_INVALID_STATUS,
+                "Cannot change payment method after payment has been confirmed or is under review."
         );
+    }
+
+    private void cancelPendingPaymentIntent(Long invoiceId) {
+        if (invoiceId == null) {
+            return;
+        }
+        paymentIntentRepository.findWithLockByInvoice_Id(invoiceId)
+                .filter(intent -> intent.getStatus() == PaymentIntentStatus.PENDING)
+                .ifPresent(intent -> {
+                    intent.setStatus(PaymentIntentStatus.CANCELLED);
+                    intent.setExpiresAt(LocalDateTime.now());
+                    paymentIntentRepository.save(intent);
+                });
+    }
+
+    private void clearBankTransferArtifacts(Invoice invoice) {
+        invoice.setPaymentReference(null);
+        invoice.setTransferContent(null);
+        invoice.setPaymentDetectedAt(null);
+        invoice.setPaymentReviewReason(null);
+    }
+
+    private void clearVnpayArtifacts(Invoice invoice) {
+        invoice.setVnpTxnRef(null);
+        invoice.setVnpPaymentUrl(null);
+    }
+
+    private InvoiceResponse refundInvoiceItemsInternal(
+            Invoice invoice,
+            Set<Long> requestedItemIds,
+            String reason,
+            Long cashierUserId,
+            String historyNote
+    ) {
+        if (!isRefundableInvoiceStatus(invoice.getPaymentStatus())) {
+            throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, "Chỉ có thể hoàn tiền hóa đơn đã thanh toán");
+        }
+        if (invoice.getItems() == null || invoice.getItems().isEmpty()) {
+            throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, "Hóa đơn không có dòng chi tiết để hoàn tiền theo mục");
+        }
+
+        Map<Long, InvoiceItem> itemById = invoice.getItems().stream()
+                .filter(item -> item.getId() != null)
+                .collect(Collectors.toMap(InvoiceItem::getId, Function.identity(), (left, ignored) -> left));
+
+        List<RefundableEvaluation> evaluations = new ArrayList<>();
+        for (Long invoiceItemId : requestedItemIds) {
+            InvoiceItem item = itemById.get(invoiceItemId);
+            if (item == null) {
+                throw new ApiException(ErrorCode.INVALID_REQUEST, "Mục hóa đơn không thuộc hóa đơn này");
+            }
+            RefundableEvaluation evaluation = evaluateRefundableItem(invoice, item, true);
+            if (!evaluation.refundable()) {
+                throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, evaluation.notRefundableReason());
+            }
+            evaluations.add(evaluation);
+        }
+
+        long refundAmount = evaluations.stream().mapToLong(RefundableEvaluation::refundableAmount).sum();
+        if (refundAmount <= 0) {
+            throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, "Mục hóa đơn đã được hoàn tiền");
+        }
+
+        User cashier = userRepository.findById(cashierUserId)
+                .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED));
+
+        Map<String, Object> before = snapshotInvoiceItemRefund(invoice, evaluations);
+        PaymentStatus previousStatus = invoice.getPaymentStatus();
+        LocalDateTime now = LocalDateTime.now();
+
+        RefundRecord refundRecord = RefundRecord.builder()
+                .invoice(invoice)
+                .refundAmount(refundAmount)
+                .reason(reason)
+                .approvedByUser(cashier)
+                .refundedAt(now)
+                .build();
+        refundRecordRepository.save(refundRecord);
+
+        List<RefundRecordItem> recordItems = new ArrayList<>();
+        for (RefundableEvaluation evaluation : evaluations) {
+            InvoiceItem item = evaluation.invoiceItem();
+            item.setRefundedAmount(item.getTotalAmount());
+            item.setRefundStatus(InvoiceItemRefundStatus.REFUNDED);
+            item.setRefundedAt(now);
+
+            if (evaluation.serviceOrderItem() != null) {
+                ServiceOrderItem source = evaluation.serviceOrderItem();
+                source.setStatus(ServiceOrderItemStatus.CANCELLED);
+                if (source.getCancelledAt() == null) {
+                    source.setCancelledAt(now);
+                }
+                source.setRefundedAt(now);
+                source.setRefundedByUser(cashier);
+                source.setRefundReason(reason);
+                serviceOrderItemRepository.save(source);
+            }
+
+            if (evaluation.prescriptionItem() != null) {
+                PrescriptionItem source = evaluation.prescriptionItem();
+                source.setStatus(PrescriptionItemStatus.REFUNDED);
+                source.setRefundedAt(now);
+                source.setRefundedByUser(cashier);
+                source.setRefundReason(reason);
+                prescriptionItemRepository.save(source);
+            }
+
+            recordItems.add(RefundRecordItem.builder()
+                    .refundRecord(refundRecord)
+                    .invoiceItem(item)
+                    .sourceItemType(item.getSourceItemType())
+                    .sourceItemId(item.getSourceItemId())
+                    .nameSnapshot(item.getNameSnapshot())
+                    .quantity(item.getQuantity())
+                    .refundAmount(evaluation.refundableAmount())
+                    .build());
+        }
+        refundRecordItemRepository.saveAll(recordItems);
+
+        PaymentStatus nextStatus = allInvoiceItemsRefunded(invoice)
+                ? PaymentStatus.REFUNDED
+                : PaymentStatus.PARTIALLY_REFUNDED;
+        invoice.setPaymentStatus(nextStatus);
+        updateSourceAggregatesAfterItemRefund(invoice, now);
+
+        Invoice saved = invoiceRepository.save(invoice);
+        invoiceStatusHistoryService.record(saved, previousStatus, saved.getPaymentStatus(), cashier, historyNote);
+
+        Map<String, Object> after = snapshotInvoiceItemRefundAfter(saved, evaluations, reason);
+        auditLogService.log(cashier, "REFUND_INVOICE_ITEMS", "INVOICE", saved.getId(), before, after);
+        publishInvoiceItemsRefundedRealtime(saved);
+
+        return toResponse(saved, true);
+    }
+
+    private boolean isRefundableInvoiceStatus(PaymentStatus status) {
+        return status == PaymentStatus.PAID || status == PaymentStatus.PARTIALLY_REFUNDED;
+    }
+
+    private RefundableEvaluation evaluateRefundableItem(Invoice invoice, InvoiceItem item, boolean lockSource) {
+        long alreadyRefundedAmount = item.getRefundedAmount() != null ? item.getRefundedAmount() : 0L;
+        long totalAmount = item.getTotalAmount() != null ? item.getTotalAmount() : 0L;
+        long refundableAmount = Math.max(0L, totalAmount - alreadyRefundedAmount);
+
+        if (!isRefundableInvoiceStatus(invoice.getPaymentStatus())) {
+            return RefundableEvaluation.notRefundable(invoice, item, alreadyRefundedAmount, refundableAmount, "Invoice is not paid.");
+        }
+        if (refundableAmount <= 0 || item.getRefundStatus() == InvoiceItemRefundStatus.REFUNDED) {
+            return RefundableEvaluation.notRefundable(invoice, item, alreadyRefundedAmount, 0L, "Invoice item has already been refunded.");
+        }
+        if (item.getSourceItemType() == null || item.getSourceItemId() == null) {
+            return RefundableEvaluation.notRefundable(
+                    invoice,
+                    item,
+                    alreadyRefundedAmount,
+                    refundableAmount,
+                    "Legacy invoice item cannot be refunded by item because source item link is missing."
+            );
+        }
+
+        if (item.getSourceItemType() == InvoiceItemSourceType.SERVICE_ORDER_ITEM) {
+            Optional<ServiceOrderItem> source = lockSource
+                    ? serviceOrderItemRepository.findWithLockById(item.getSourceItemId())
+                    : serviceOrderItemRepository.findById(item.getSourceItemId());
+            if (source.isEmpty()) {
+                return RefundableEvaluation.notRefundable(invoice, item, alreadyRefundedAmount, refundableAmount, "Source service item was not found.");
+            }
+            return evaluateServiceOrderItemRefund(invoice, item, source.get(), alreadyRefundedAmount, refundableAmount);
+        }
+
+        if (item.getSourceItemType() == InvoiceItemSourceType.PRESCRIPTION_ITEM) {
+            Optional<PrescriptionItem> source = lockSource
+                    ? prescriptionItemRepository.findWithLockById(item.getSourceItemId())
+                    : prescriptionItemRepository.findById(item.getSourceItemId());
+            if (source.isEmpty()) {
+                return RefundableEvaluation.notRefundable(invoice, item, alreadyRefundedAmount, refundableAmount, "Source prescription item was not found.");
+            }
+            return evaluatePrescriptionItemRefund(invoice, item, source.get(), alreadyRefundedAmount, refundableAmount);
+        }
+
+        return RefundableEvaluation.notRefundable(invoice, item, alreadyRefundedAmount, refundableAmount, "Invoice item source type is not supported.");
+    }
+
+    private RefundableEvaluation evaluateServiceOrderItemRefund(
+            Invoice invoice,
+            InvoiceItem invoiceItem,
+            ServiceOrderItem source,
+            long alreadyRefundedAmount,
+            long refundableAmount
+    ) {
+        ServiceResult result = serviceResultRepository.findByServiceOrderItem_Id(source.getId()).orElse(null);
+        String reason = serviceItemNotRefundableReason(source, result);
+        if (reason != null) {
+            return RefundableEvaluation.notRefundable(invoice, invoiceItem, source, result, alreadyRefundedAmount, refundableAmount, reason);
+        }
+        return RefundableEvaluation.refundable(invoice, invoiceItem, source, result, alreadyRefundedAmount, refundableAmount);
+    }
+
+    private RefundableEvaluation evaluatePrescriptionItemRefund(
+            Invoice invoice,
+            InvoiceItem invoiceItem,
+            PrescriptionItem source,
+            long alreadyRefundedAmount,
+            long refundableAmount
+    ) {
+        String reason = prescriptionItemNotRefundableReason(source);
+        if (reason != null) {
+            return RefundableEvaluation.notRefundable(invoice, invoiceItem, source, alreadyRefundedAmount, refundableAmount, reason);
+        }
+        return RefundableEvaluation.refundable(invoice, invoiceItem, source, alreadyRefundedAmount, refundableAmount);
+    }
+
+    private String serviceItemNotRefundableReason(ServiceOrderItem item, ServiceResult result) {
+        if (item.getStatus() == ServiceOrderItemStatus.IN_PROGRESS) {
+            return "Service item has already started.";
+        }
+        if (item.getStatus() == ServiceOrderItemStatus.DONE) {
+            return "Service item has already been completed.";
+        }
+        if (item.getStatus() == ServiceOrderItemStatus.CANCELLED) {
+            return "Service item has already been cancelled or refunded.";
+        }
+        if (item.getStatus() != ServiceOrderItemStatus.WAITING_EXECUTION) {
+            return "Service item is not ready for refundable cancellation.";
+        }
+        if (item.getResultStatus() != null && item.getResultStatus() != ServiceResultStatus.DRAFT) {
+            return "Service result is already completed or under verification.";
+        }
+        if (item.getCompletedAt() != null) {
+            return "Service item has completion timestamp.";
+        }
+        if (hasMeaningfulServiceResult(result)) {
+            return "Service result already contains clinical content or files.";
+        }
+        return null;
+    }
+
+    private boolean hasMeaningfulServiceResult(ServiceResult result) {
+        if (result == null) {
+            return false;
+        }
+        if (result.getStatus() == ServiceResultStatus.COMPLETED || result.getStatus() == ServiceResultStatus.VERIFIED) {
+            return true;
+        }
+        return optionalText(result.getResultTextVn(), null) != null
+                || optionalText(result.getResultTextEn(), null) != null
+                || optionalText(result.getResultDataJson(), null) != null
+                || optionalText(result.getFieldValuesJson(), null) != null
+                || optionalText(result.getConclusionText(), null) != null
+                || optionalText(result.getImpressionText(), null) != null
+                || optionalText(result.getAttachmentUrl(), null) != null
+                || optionalText(result.getAttachmentUrlsJson(), null) != null
+                || optionalText(result.getReportPdfPath(), null) != null
+                || result.getPerformedAt() != null
+                || result.getVerifiedAt() != null;
+    }
+
+    private String prescriptionItemNotRefundableReason(PrescriptionItem item) {
+        Prescription prescription = item.getPrescription();
+        if (prescription != null && prescription.getStatus() == PrescriptionStatus.DISPENSED) {
+            return "Prescription has already been dispensed.";
+        }
+        PrescriptionItemStatus status = effectivePrescriptionItemStatus(item);
+        if (status == PrescriptionItemStatus.DISPENSED) {
+            return "Medication item has already been dispensed.";
+        }
+        if (status == PrescriptionItemStatus.REFUNDED || status == PrescriptionItemStatus.CANCELLED) {
+            return "Medication item has already been refunded or cancelled.";
+        }
+        return null;
+    }
+
+    private PrescriptionItemStatus effectivePrescriptionItemStatus(PrescriptionItem item) {
+        if (item.getStatus() != null) {
+            return item.getStatus();
+        }
+        Prescription prescription = item.getPrescription();
+        if (prescription != null && prescription.getStatus() == PrescriptionStatus.DISPENSED) {
+            return PrescriptionItemStatus.DISPENSED;
+        }
+        if (prescription != null && prescription.getStatus() == PrescriptionStatus.PAID) {
+            return PrescriptionItemStatus.PAID;
+        }
+        return PrescriptionItemStatus.ISSUED;
+    }
+
+    private void updateSourceAggregatesAfterItemRefund(Invoice invoice, LocalDateTime now) {
+        if (invoice.getServiceOrder() != null) {
+            updateServiceOrderAfterItemRefund(invoice.getServiceOrder(), invoice, now);
+        }
+        if (invoice.getPrescription() != null) {
+            updatePrescriptionAfterItemRefund(invoice.getPrescription());
+        }
+    }
+
+    private void updateServiceOrderAfterItemRefund(ServiceOrder order, Invoice invoice, LocalDateTime now) {
+        if (allInvoiceItemsRefunded(invoice)) {
+            order.setPaymentStatus(PaymentStatus.REFUNDED);
+        } else if (order.getPaymentStatus() == PaymentStatus.PAID || order.getPaymentStatus() == PaymentStatus.PARTIALLY_REFUNDED) {
+            order.setPaymentStatus(PaymentStatus.PARTIALLY_REFUNDED);
+        }
+        if (order.getItems() != null && !order.getItems().isEmpty()
+                && order.getItems().stream().allMatch(item -> item.getStatus() == ServiceOrderItemStatus.CANCELLED)) {
+            order.setStatus(ServiceOrderStatus.CANCELLED);
+            if (order.getCancelledAt() == null) {
+                order.setCancelledAt(now);
+            }
+        }
+        orderRepository.save(order);
+        if (order.getEncounter() != null) {
+            encounterWorkflowService.refreshStatus(order.getEncounter());
+        }
+    }
+
+    private void updatePrescriptionAfterItemRefund(Prescription prescription) {
+        if (prescription.getItems() == null || prescription.getItems().isEmpty()) {
+            return;
+        }
+        boolean allRefundedOrCancelled = prescription.getItems().stream()
+                .allMatch(item -> {
+                    PrescriptionItemStatus status = effectivePrescriptionItemStatus(item);
+                    return status == PrescriptionItemStatus.REFUNDED || status == PrescriptionItemStatus.CANCELLED;
+                });
+        if (allRefundedOrCancelled) {
+            prescription.setStatus(PrescriptionStatus.CANCELLED);
+        } else if (prescription.getStatus() != PrescriptionStatus.DISPENSED
+                && prescription.getStatus() != PrescriptionStatus.CANCELLED) {
+            prescription.setStatus(PrescriptionStatus.PAID);
+        }
+        prescriptionRepository.save(prescription);
+    }
+
+    private boolean allInvoiceItemsRefunded(Invoice invoice) {
+        return invoice.getItems() != null
+                && !invoice.getItems().isEmpty()
+                && invoice.getItems().stream().allMatch(this::isInvoiceItemRefunded);
+    }
+
+    private boolean isInvoiceItemRefunded(InvoiceItem item) {
+        long totalAmount = item.getTotalAmount() != null ? item.getTotalAmount() : 0L;
+        long refundedAmount = item.getRefundedAmount() != null ? item.getRefundedAmount() : 0L;
+        return totalAmount > 0 && refundedAmount >= totalAmount;
+    }
+
+    private long refundedAmount(Invoice invoice) {
+        long itemRefundedAmount = invoice.getItems() != null
+                ? invoice.getItems().stream()
+                .mapToLong(item -> item.getRefundedAmount() != null ? item.getRefundedAmount() : 0L)
+                .sum()
+                : 0L;
+        if (itemRefundedAmount == 0L && invoice.getPaymentStatus() == PaymentStatus.REFUNDED) {
+            return invoice.getTotalAmount() != null ? invoice.getTotalAmount() : 0L;
+        }
+        return itemRefundedAmount;
+    }
+
+    private long remainingAmount(Invoice invoice, long refundedAmount) {
+        long totalAmount = invoice.getTotalAmount() != null ? invoice.getTotalAmount() : 0L;
+        return Math.max(0L, totalAmount - refundedAmount);
     }
 
     private void upsertPaymentIntent(
@@ -621,6 +1241,8 @@ public class BillingService {
                         .paymentReference(invoice.getPaymentReference())
                         .build());
 
+        intent.setProvider(PaymentIntentProvider.VIETQR);
+        intent.setPaymentReference(invoice.getPaymentReference());
         intent.setTransferContent(invoice.getTransferContent());
         intent.setBankCode(optionalText(billingQrService.bankCode(), null));
         intent.setBankAccountNo(optionalText(billingQrService.accountNo(), null));
@@ -632,6 +1254,11 @@ public class BillingService {
         intent.setExpiresAt(invoice.getCreatedAt() != null ? invoice.getCreatedAt().plusDays(1) : LocalDateTime.now().plusDays(1));
         if (matchedTransactionRef != null && !matchedTransactionRef.isBlank()) {
             intent.setMatchedTransactionRef(matchedTransactionRef);
+        }
+        if (status == PaymentIntentStatus.PENDING) {
+            intent.setDetectedAt(null);
+            intent.setConfirmedAt(null);
+            intent.setMatchedTransactionRef(null);
         }
         if (status == PaymentIntentStatus.DETECTED) {
             intent.setDetectedAt(detectedOrConfirmedAt != null ? detectedOrConfirmedAt : LocalDateTime.now());
@@ -645,6 +1272,21 @@ public class BillingService {
     }
 
     private void applyPaidState(Invoice invoice, LocalDateTime paidAt) {
+        if (invoice.getPaymentStatus() == PaymentStatus.PARTIALLY_REFUNDED
+                || invoice.getPaymentStatus() == PaymentStatus.REFUNDED
+                || invoice.getPaymentStatus() == PaymentStatus.VOID) {
+            throw new ApiException(ErrorCode.INVOICE_INVALID_STATUS, "Hóa đơn đã hoàn/hủy, không thể xác nhận thanh toán");
+        }
+
+        if (invoice.getPrescription() != null) {
+            applyPrescriptionPaidState(invoice, paidAt);
+            return;
+        }
+
+        if (invoice.getServiceOrder() == null) {
+            throw new ApiException(ErrorCode.INVOICE_INVALID_STATUS, "Hóa đơn không liên kết phiếu chỉ định hoặc đơn thuốc");
+        }
+
         ServiceOrder order = orderRepository.findWithLockById(invoice.getServiceOrder().getId())
                                             .orElseThrow(() -> new ApiException(ErrorCode.SERVICE_ORDER_NOT_FOUND));
 
@@ -667,7 +1309,39 @@ public class BillingService {
         encounterWorkflowService.refreshStatus(order.getEncounter());
     }
 
+    private void applyPrescriptionPaidState(Invoice invoice, LocalDateTime paidAt) {
+        Prescription prescription = invoice.getPrescription();
+        if (prescription.getStatus() == PrescriptionStatus.CANCELLED) {
+            throw new ApiException(ErrorCode.PRESCRIPTION_INVALID_STATUS, "Đơn thuốc đã hủy, không thể thanh toán");
+        }
+        if (prescription.getStatus() == PrescriptionStatus.DISPENSED) {
+            throw new ApiException(ErrorCode.PRESCRIPTION_INVALID_STATUS, "Đơn thuốc đã phát, không thể thanh toán lại");
+        }
+        if (prescription.getStatus() != PrescriptionStatus.ISSUED
+                && prescription.getStatus() != PrescriptionStatus.PAID) {
+            throw new ApiException(ErrorCode.PRESCRIPTION_INVALID_STATUS, "Chỉ thanh toán đơn thuốc đã phát hành");
+        }
+
+        LocalDateTime now = paidAt != null ? paidAt : LocalDateTime.now();
+        invoice.setPaymentStatus(PaymentStatus.PAID);
+        invoice.setPaidAt(now);
+        prescription.setStatus(PrescriptionStatus.PAID);
+        if (prescription.getItems() != null) {
+            for (PrescriptionItem item : prescription.getItems()) {
+                PrescriptionItemStatus status = effectivePrescriptionItemStatus(item);
+                if (status == PrescriptionItemStatus.ISSUED || status == PrescriptionItemStatus.PAID) {
+                    item.setStatus(PrescriptionItemStatus.PAID);
+                }
+            }
+        }
+    }
+
     private void publishPaidRealtime(Invoice invoice) {
+        if (invoice.getPrescription() != null) {
+            publishPrescriptionPaidRealtime(invoice);
+            return;
+        }
+
         ServiceOrder order = invoice.getServiceOrder();
         var departmentCodes = order.getItems().stream()
                                    .map(ServiceOrderItem::getAssignedDepartmentCode)
@@ -725,7 +1399,83 @@ public class BillingService {
         });
     }
 
+    private void publishPrescriptionPaidRealtime(Invoice invoice) {
+        Prescription prescription = invoice.getPrescription();
+        Long encounterId = prescription.getEncounter() != null ? prescription.getEncounter().getId() : null;
+        Long doctorProfileId = prescription.getEncounter() != null && prescription.getEncounter().getDoctor() != null
+                ? prescription.getEncounter().getDoctor().getId()
+                : null;
+        Long branchId = prescription.getEncounter() != null && prescription.getEncounter().getBranch() != null
+                ? prescription.getEncounter().getBranch().getId()
+                : null;
+        String encounterStatus = prescription.getEncounter() != null && prescription.getEncounter().getStatus() != null
+                ? prescription.getEncounter().getStatus().name()
+                : null;
+        Long invoiceId = invoice.getId();
+        String invoiceCode = invoice.getCode();
+        String prescriptionCode = prescription.getCode();
+        String patientName = prescription.getEncounter() != null ? prescription.getEncounter().getPatientFullNameSnapshot() : null;
+        Long amount = invoice.getTotalAmount();
+
+        afterCommitExecutor.execute(() -> {
+            if (encounterId != null) {
+                realtimeEventPublisher.publishEncounterChannel(
+                        encounterId,
+                        "PRESCRIPTION_PAID",
+                        Map.of(
+                                "prescriptionId", prescription.getId(),
+                                "prescriptionCode", prescriptionCode,
+                                "invoiceId", invoiceId,
+                                "invoiceCode", invoiceCode
+                        )
+                );
+            }
+            if (doctorProfileId != null && encounterId != null && encounterStatus != null) {
+                realtimeEventPublisher.publishDoctorEncounterUpdated(doctorProfileId, encounterId, encounterStatus);
+            }
+            realtimeEventPublisher.publishCashierOrderEvent(
+                    branchId,
+                    "PRESCRIPTION_INVOICE_PAID",
+                    null,
+                    prescriptionCode,
+                    patientName,
+                    amount,
+                    invoiceId,
+                    invoiceCode
+            );
+            internalNotificationService.notifyRole(
+                    UserRole.PHARMACIST,
+                    "PRESCRIPTION_PAID",
+                    InternalNotificationService.SEVERITY_INFO,
+                    "Có đơn thuốc chờ phát",
+                    "Đơn thuốc " + prescriptionCode + " đã thanh toán và chờ phát thuốc.",
+                    "/app/pharmacy/dispense",
+                    "PRESCRIPTION",
+                    prescription.getId()
+            );
+        });
+    }
+
     private void publishInvoiceCreatedRealtime(Invoice invoice) {
+        if (invoice.getPrescription() != null) {
+            Prescription prescription = invoice.getPrescription();
+            Long branchId = prescription.getEncounter() != null && prescription.getEncounter().getBranch() != null
+                    ? prescription.getEncounter().getBranch().getId()
+                    : null;
+            String patientName = prescription.getEncounter() != null ? prescription.getEncounter().getPatientFullNameSnapshot() : null;
+            afterCommitExecutor.execute(() -> realtimeEventPublisher.publishCashierOrderEvent(
+                    branchId,
+                    "PRESCRIPTION_INVOICE_CREATED",
+                    null,
+                    prescription.getCode(),
+                    patientName,
+                    invoice.getTotalAmount(),
+                    invoice.getId(),
+                    invoice.getCode()
+            ));
+            return;
+        }
+
         ServiceOrder order = invoice.getServiceOrder();
         Long branchId = order.getBranch() != null ? order.getBranch().getId() : null;
         afterCommitExecutor.execute(() -> realtimeEventPublisher.publishCashierOrderEvent(
@@ -738,6 +1488,110 @@ public class BillingService {
                 invoice.getId(),
                 invoice.getCode()
         ));
+    }
+
+    private void publishInvoicePaymentMethodChangedRealtime(Invoice invoice) {
+        if (invoice.getPrescription() != null) {
+            Prescription prescription = invoice.getPrescription();
+            Long branchId = prescription.getEncounter() != null && prescription.getEncounter().getBranch() != null
+                    ? prescription.getEncounter().getBranch().getId()
+                    : null;
+            String patientName = prescription.getEncounter() != null
+                    ? prescription.getEncounter().getPatientFullNameSnapshot()
+                    : null;
+            afterCommitExecutor.execute(() -> realtimeEventPublisher.publishCashierOrderEvent(
+                    branchId,
+                    "PRESCRIPTION_INVOICE_PAYMENT_METHOD_CHANGED",
+                    null,
+                    prescription.getCode(),
+                    patientName,
+                    invoice.getTotalAmount(),
+                    invoice.getId(),
+                    invoice.getCode()
+            ));
+            return;
+        }
+
+        ServiceOrder order = invoice.getServiceOrder();
+        Long branchId = order != null && order.getBranch() != null ? order.getBranch().getId() : null;
+        afterCommitExecutor.execute(() -> realtimeEventPublisher.publishCashierOrderEvent(
+                branchId,
+                "INVOICE_PAYMENT_METHOD_CHANGED",
+                order != null ? order.getId() : null,
+                order != null ? order.getCode() : null,
+                order != null && order.getEncounter() != null ? order.getEncounter().getPatientFullNameSnapshot() : null,
+                invoice.getTotalAmount(),
+                invoice.getId(),
+                invoice.getCode()
+        ));
+    }
+
+    private void publishInvoiceItemsRefundedRealtime(Invoice invoice) {
+        if (invoice.getPrescription() != null) {
+            Prescription prescription = invoice.getPrescription();
+            Long encounterId = prescription.getEncounter() != null ? prescription.getEncounter().getId() : null;
+            Long branchId = prescription.getEncounter() != null && prescription.getEncounter().getBranch() != null
+                    ? prescription.getEncounter().getBranch().getId()
+                    : null;
+            String patientName = prescription.getEncounter() != null
+                    ? prescription.getEncounter().getPatientFullNameSnapshot()
+                    : null;
+            afterCommitExecutor.execute(() -> {
+                if (encounterId != null) {
+                    realtimeEventPublisher.publishEncounterChannel(
+                            encounterId,
+                            "PRESCRIPTION_ITEMS_REFUNDED",
+                            Map.of(
+                                    "prescriptionId", prescription.getId(),
+                                    "prescriptionCode", prescription.getCode(),
+                                    "invoiceId", invoice.getId(),
+                                    "invoiceCode", invoice.getCode()
+                            )
+                    );
+                }
+                realtimeEventPublisher.publishCashierOrderEvent(
+                        branchId,
+                        "PRESCRIPTION_INVOICE_ITEMS_REFUNDED",
+                        null,
+                        prescription.getCode(),
+                        patientName,
+                        invoice.getTotalAmount(),
+                        invoice.getId(),
+                        invoice.getCode()
+                );
+            });
+            return;
+        }
+
+        ServiceOrder order = invoice.getServiceOrder();
+        Long branchId = order != null && order.getBranch() != null ? order.getBranch().getId() : null;
+        Long encounterId = order != null && order.getEncounter() != null ? order.getEncounter().getId() : null;
+        String encounterStatus = order != null && order.getEncounter() != null && order.getEncounter().getStatus() != null
+                ? order.getEncounter().getStatus().name()
+                : null;
+        afterCommitExecutor.execute(() -> {
+            if (encounterId != null && encounterStatus != null) {
+                realtimeEventPublisher.publishEncounterChannel(
+                        encounterId,
+                        "SERVICE_ORDER_ITEMS_REFUNDED",
+                        Map.of(
+                                "status", encounterStatus,
+                                "invoiceId", invoice.getId(),
+                                "invoiceCode", invoice.getCode()
+                        )
+                );
+            }
+            realtimeEventPublisher.publishCashierOrderEvent(
+                    branchId,
+                    "INVOICE_ITEMS_REFUNDED",
+                    order != null ? order.getId() : null,
+                    order != null ? order.getCode() : null,
+                    order != null && order.getEncounter() != null ? order.getEncounter().getPatientFullNameSnapshot() : null,
+                    invoice.getTotalAmount(),
+                    invoice.getId(),
+                    invoice.getCode()
+            );
+        });
     }
 
     private void notifyDoctorPaymentConfirmed(ServiceOrder order, Invoice invoice) {
@@ -809,6 +1663,17 @@ public class BillingService {
         }
     }
 
+    private Optional<LocalDateTime> parseVnpayPayDate(String payDate) {
+        if (payDate == null || payDate.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(LocalDateTime.parse(payDate, DateTimeFormatter.ofPattern("yyyyMMddHHmmss")));
+        } catch (Exception ignored) {
+            return Optional.empty();
+        }
+    }
+
     private String generateInvoiceCode(ServiceOrder order) {
         int random = secureRandom.nextInt(10000);
         return "INV-%d-%04d-%04d".formatted(
@@ -816,6 +1681,28 @@ public class BillingService {
                 order.getId() % 10000,
                 random
         );
+    }
+
+    private String generatePrescriptionInvoiceCode(Prescription prescription) {
+        int random = secureRandom.nextInt(10000);
+        return "INV-RX-%d-%04d-%04d".formatted(
+                System.currentTimeMillis(),
+                prescription.getId() % 10000,
+                random
+        );
+    }
+
+    private void validatePrescriptionInvoiceSource(Prescription prescription) {
+        if (prescription.getStatus() == PrescriptionStatus.CANCELLED) {
+            throw new ApiException(ErrorCode.PRESCRIPTION_INVALID_STATUS, "Đơn thuốc đã hủy, không thể tạo hóa đơn");
+        }
+        if (prescription.getStatus() == PrescriptionStatus.DISPENSED) {
+            throw new ApiException(ErrorCode.PRESCRIPTION_INVALID_STATUS, "Đơn thuốc đã phát, không thể tạo hóa đơn mới");
+        }
+        if (prescription.getStatus() != PrescriptionStatus.ISSUED
+                && prescription.getStatus() != PrescriptionStatus.PAID) {
+            throw new ApiException(ErrorCode.PRESCRIPTION_INVALID_STATUS, "Chỉ tạo hóa đơn cho đơn thuốc đã phát hành");
+        }
     }
 
     private String generatePaymentReference() {
@@ -838,24 +1725,41 @@ public class BillingService {
             }
         }
 
+        ServiceOrder serviceOrder = entity.getServiceOrder();
+        Prescription prescription = entity.getPrescription();
+        var encounter = serviceOrder != null
+                ? serviceOrder.getEncounter()
+                : (prescription != null ? prescription.getEncounter() : null);
+        var branch = serviceOrder != null
+                ? serviceOrder.getBranch()
+                : (encounter != null ? encounter.getBranch() : null);
+        long refundedAmount = refundedAmount(entity);
+
         return InvoiceResponse.builder()
                               .id(entity.getId())
                               .code(entity.getCode())
-                              .serviceOrderId(entity.getServiceOrder().getId())
-                              .serviceOrderCode(entity.getServiceOrder().getCode())
-                              .encounterId(entity.getServiceOrder().getEncounter().getId())
-                              .patientName(entity.getServiceOrder().getEncounter().getPatient().getFullName())
-                              .doctorName(entity.getServiceOrder().getEncounter().getDoctor().getFullName())
-                              .branchName(entity.getServiceOrder().getBranch().getNameVn())
+                              .invoiceType(prescription != null ? "PRESCRIPTION" : "SERVICE_ORDER")
+                              .serviceOrderId(serviceOrder != null ? serviceOrder.getId() : null)
+                              .serviceOrderCode(serviceOrder != null ? serviceOrder.getCode() : null)
+                              .prescriptionId(prescription != null ? prescription.getId() : null)
+                              .prescriptionCode(prescription != null ? prescription.getCode() : null)
+                              .encounterId(encounter != null ? encounter.getId() : null)
+                              .patientName(resolveInvoicePatientName(serviceOrder, prescription))
+                              .doctorName(encounter != null && encounter.getDoctor() != null ? encounter.getDoctor().getFullName() : null)
+                              .branchName(branch != null ? branch.getNameVn() : null)
                               .subtotalAmount(entity.getSubtotalAmount())
                               .discountAmount(entity.getDiscountAmount())
                               .taxAmount(entity.getTaxAmount())
                               .totalAmount(entity.getTotalAmount())
+                              .refundedAmount(refundedAmount)
+                              .remainingAmount(remainingAmount(entity, refundedAmount))
                               .items(entity.getItems() != null ? entity.getItems().stream().map(i ->
                                       com.PrimeCare.PrimeCare.modules.billing.dto.response.InvoiceItemResponse.builder()
                                               .id(i.getId())
                                               .referenceType(i.getReferenceType().name())
                                               .referenceId(i.getReferenceId())
+                                              .sourceItemType(i.getSourceItemType() != null ? i.getSourceItemType().name() : null)
+                                              .sourceItemId(i.getSourceItemId())
                                               .nameSnapshot(i.getNameSnapshot())
                                               .unitPrice(i.getUnitPrice())
                                               .quantity(i.getQuantity())
@@ -863,6 +1767,8 @@ public class BillingService {
                                               .subtotalAmount(i.getSubtotalAmount())
                                               .taxAmount(i.getTaxAmount())
                                               .totalAmount(i.getTotalAmount())
+                                              .refundedAmount(i.getRefundedAmount() != null ? i.getRefundedAmount() : 0L)
+                                              .refundStatus(i.getRefundStatus() != null ? i.getRefundStatus().name() : null)
                                               .build()
                               ).toList() : new ArrayList<>())
                               .paymentMethod(entity.getPaymentMethod())
@@ -922,9 +1828,30 @@ public class BillingService {
                                                                           .queueNo(i.getQueueNo())
                                                                           .status(i.getStatus())
                                                                           .resultStatus(i.getResultStatus())
+                                                                          .cancelledAt(i.getCancelledAt())
+                                                                          .refundReason(i.getRefundReason())
+                                                                          .refundedAt(i.getRefundedAt())
                                                                           .build()
                                           ).toList())
                                           .build();
+    }
+
+    private String resolveInvoicePatientName(ServiceOrder serviceOrder, Prescription prescription) {
+        if (serviceOrder != null && serviceOrder.getEncounter() != null) {
+            if (serviceOrder.getEncounter().getPatient() != null
+                    && serviceOrder.getEncounter().getPatient().getFullName() != null) {
+                return serviceOrder.getEncounter().getPatient().getFullName();
+            }
+            return serviceOrder.getEncounter().getPatientFullNameSnapshot();
+        }
+        if (prescription != null && prescription.getEncounter() != null) {
+            if (prescription.getEncounter().getPatient() != null
+                    && prescription.getEncounter().getPatient().getFullName() != null) {
+                return prescription.getEncounter().getPatient().getFullName();
+            }
+            return prescription.getEncounter().getPatientFullNameSnapshot();
+        }
+        return null;
     }
 
     private LocalDateTime startOfDay(LocalDate date) {
@@ -956,6 +1883,7 @@ public class BillingService {
         data.put("id", invoice.getId());
         data.put("code", invoice.getCode());
         data.put("serviceOrderId", invoice.getServiceOrder() != null ? invoice.getServiceOrder().getId() : null);
+        data.put("prescriptionId", invoice.getPrescription() != null ? invoice.getPrescription().getId() : null);
         data.put("cashierId", invoice.getCashier() != null ? invoice.getCashier().getId() : null);
         data.put("paymentMethod", invoice.getPaymentMethod() != null ? invoice.getPaymentMethod().name() : null);
         data.put("paymentStatus", invoice.getPaymentStatus() != null ? invoice.getPaymentStatus().name() : null);
@@ -968,7 +1896,88 @@ public class BillingService {
         data.put("totalAmount", invoice.getTotalAmount());
         data.put("paidAt", invoice.getPaidAt());
         data.put("vnpTxnRef", invoice.getVnpTxnRef());
-        data.put("vnpPaymentUrl", invoice.getVnpPaymentUrl());
+        data.put("hasVnpPaymentUrl", invoice.getVnpPaymentUrl() != null && !invoice.getVnpPaymentUrl().isBlank());
+        return data;
+    }
+
+    private Map<String, Object> snapshotPaymentMethodChangeBefore(Invoice invoice) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("invoiceId", invoice.getId());
+        data.put("invoiceCode", invoice.getCode());
+        data.put("oldPaymentMethod", invoice.getPaymentMethod() != null ? invoice.getPaymentMethod().name() : null);
+        data.put("oldPaymentStatus", invoice.getPaymentStatus() != null ? invoice.getPaymentStatus().name() : null);
+        data.put("oldPaymentReference", invoice.getPaymentReference());
+        data.put("oldTransferContent", invoice.getTransferContent());
+        data.put("oldVnpTxnRef", invoice.getVnpTxnRef());
+        data.put("oldVnpPaymentUrl", invoice.getVnpPaymentUrl());
+        return data;
+    }
+
+    private Map<String, Object> snapshotPaymentMethodChangeAfter(Invoice invoice) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("invoiceId", invoice.getId());
+        data.put("invoiceCode", invoice.getCode());
+        data.put("newPaymentMethod", invoice.getPaymentMethod() != null ? invoice.getPaymentMethod().name() : null);
+        data.put("newPaymentStatus", invoice.getPaymentStatus() != null ? invoice.getPaymentStatus().name() : null);
+        data.put("newPaymentReference", invoice.getPaymentReference());
+        data.put("newTransferContent", invoice.getTransferContent());
+        data.put("newVnpTxnRef", invoice.getVnpTxnRef());
+        data.put("newVnpPaymentUrl", invoice.getVnpPaymentUrl());
+        return data;
+    }
+
+    private Map<String, Object> snapshotInvoiceItemRefund(Invoice invoice, List<RefundableEvaluation> evaluations) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("invoiceId", invoice.getId());
+        data.put("invoiceCode", invoice.getCode());
+        data.put("paymentStatus", invoice.getPaymentStatus() != null ? invoice.getPaymentStatus().name() : null);
+        data.put("totalAmount", invoice.getTotalAmount());
+        data.put("refundedAmount", refundedAmount(invoice));
+        data.put("selectedItems", evaluations.stream().map(this::snapshotRefundEvaluation).toList());
+        return data;
+    }
+
+    private Map<String, Object> snapshotInvoiceItemRefundAfter(
+            Invoice invoice,
+            List<RefundableEvaluation> evaluations,
+            String reason
+    ) {
+        long refundedAmount = refundedAmount(invoice);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("invoiceId", invoice.getId());
+        data.put("invoiceCode", invoice.getCode());
+        data.put("paymentStatus", invoice.getPaymentStatus() != null ? invoice.getPaymentStatus().name() : null);
+        data.put("totalAmount", invoice.getTotalAmount());
+        data.put("refundedAmount", refundedAmount);
+        data.put("remainingAmount", remainingAmount(invoice, refundedAmount));
+        data.put("refundedInvoiceItemIds", evaluations.stream().map(e -> e.invoiceItem().getId()).toList());
+        data.put("items", evaluations.stream().map(this::snapshotRefundEvaluation).toList());
+        data.put("reason", reason);
+        return data;
+    }
+
+    private Map<String, Object> snapshotRefundEvaluation(RefundableEvaluation evaluation) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        InvoiceItem item = evaluation.invoiceItem();
+        data.put("invoiceItemId", item.getId());
+        data.put("sourceItemType", item.getSourceItemType() != null ? item.getSourceItemType().name() : null);
+        data.put("sourceItemId", item.getSourceItemId());
+        data.put("name", item.getNameSnapshot());
+        data.put("totalAmount", item.getTotalAmount());
+        data.put("refundedAmount", item.getRefundedAmount());
+        if (evaluation.serviceOrderItem() != null) {
+            data.put("serviceOrderItemStatus", evaluation.serviceOrderItem().getStatus() != null
+                    ? evaluation.serviceOrderItem().getStatus().name()
+                    : null);
+            data.put("serviceResultStatus", evaluation.serviceOrderItem().getResultStatus() != null
+                    ? evaluation.serviceOrderItem().getResultStatus().name()
+                    : null);
+        }
+        if (evaluation.prescriptionItem() != null) {
+            data.put("prescriptionItemStatus", evaluation.prescriptionItem().getStatus() != null
+                    ? evaluation.prescriptionItem().getStatus().name()
+                    : null);
+        }
         return data;
     }
 
@@ -977,16 +1986,37 @@ public class BillingService {
         Invoice invoice = invoiceRepository.findWithLockById(invoiceId)
                 .orElseThrow(() -> new ApiException(ErrorCode.INVOICE_NOT_FOUND));
 
-        if (refundAmount == null || refundAmount <= 0) {
-            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Số tiền hoàn phải lớn hơn 0");
-        }
-
-        if (invoice.getPaymentStatus() != PaymentStatus.PAID) {
+        if (!isRefundableInvoiceStatus(invoice.getPaymentStatus())) {
+            if (invoice.getPaymentStatus() == PaymentStatus.REFUNDED) {
+                throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, "Hóa đơn đã được hoàn tiền toàn bộ");
+            }
             throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, "Chỉ có thể hoàn tiền cho hóa đơn đã thanh toán");
         }
 
-        if (refundAmount > invoice.getTotalAmount()) {
-            throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, "Số tiền hoàn lớn hơn tổng hóa đơn");
+        String normalizedReason = optionalText(reason, null);
+        if (normalizedReason == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Lý do hoàn tiền không được để trống");
+        }
+
+        long remainingAmount = remainingAmount(invoice, refundedAmount(invoice));
+        Long effectiveRefundAmount = refundAmount != null ? refundAmount : remainingAmount;
+        if (effectiveRefundAmount == null || effectiveRefundAmount <= 0) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Số tiền hoàn phải lớn hơn 0");
+        }
+
+        if (!effectiveRefundAmount.equals(remainingAmount)) {
+            throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, "Hệ thống hiện chỉ hỗ trợ hoàn toàn bộ hóa đơn");
+        }
+
+        if (invoice.getItems() != null && !invoice.getItems().isEmpty()) {
+            Set<Long> remainingItemIds = invoice.getItems().stream()
+                    .filter(item -> !isInvoiceItemRefunded(item))
+                    .map(InvoiceItem::getId)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            if (remainingItemIds.isEmpty()) {
+                throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, "Hóa đơn đã được hoàn tiền toàn bộ");
+            }
+            return refundInvoiceItemsInternal(invoice, remainingItemIds, normalizedReason, cashierUserId, "Full invoice item refund");
         }
 
         User cashier = userRepository.findById(cashierUserId)
@@ -997,26 +2027,153 @@ public class BillingService {
 
         RefundRecord refund = RefundRecord.builder()
                 .invoice(invoice)
-                .refundAmount(refundAmount)
-                .reason(reason)
+                .refundAmount(effectiveRefundAmount)
+                .reason(normalizedReason)
                 .approvedByUser(cashier)
                 .build();
         refundRecordRepository.save(refund);
 
-        invoice.setPaymentStatus(PaymentStatus.REFUNDED);
         RefundCascadeResult cascadeResult = applyRefundedState(invoice);
+        invoice.setPaymentStatus(PaymentStatus.REFUNDED);
         Invoice saved = invoiceRepository.save(invoice);
 
-        invoiceStatusHistoryService.record(saved, previousPaymentStatus, saved.getPaymentStatus(), cashier, "Refund: " + reason);
-        auditLogService.log(cashier, "REFUND", "INVOICE", saved.getId(), before, snapshotInvoice(saved));
+        invoiceStatusHistoryService.record(saved, previousPaymentStatus, saved.getPaymentStatus(), cashier, "Refund: " + normalizedReason);
+        auditLogService.log(cashier, "REFUND_INVOICE", "INVOICE", saved.getId(), before, snapshotInvoice(saved));
         publishRefundRealtime(saved, cascadeResult);
 
         return toResponse(saved, true);
     }
 
+    @Transactional
+    public InvoiceResponse createPrescriptionInvoice(Long prescriptionId, Long cashierUserId, PayInvoiceRequest req) {
+        Prescription prescription = prescriptionRepository.findWithLockDetailsById(prescriptionId)
+                .orElseThrow(() -> new ApiException(ErrorCode.PRESCRIPTION_NOT_FOUND));
+
+        validatePrescriptionInvoiceSource(prescription);
+
+        Optional<Invoice> existingInvoice = invoiceRepository.findByPrescription_Id(prescription.getId());
+        if (existingInvoice.isPresent()) {
+            return toResponse(existingInvoice.get(), true);
+        }
+
+        User cashier = userRepository.findById(cashierUserId)
+                .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED));
+
+        long totalSubtotal = 0L;
+        List<InvoiceItem> invoiceItems = new ArrayList<>();
+
+        for (PrescriptionItem prescriptionItem : prescription.getItems()) {
+            if (prescriptionItem.getQuantity() == null || prescriptionItem.getQuantity() <= 0) {
+                throw new ApiException(ErrorCode.INVALID_REQUEST, "Số lượng thuốc trong đơn không hợp lệ");
+            }
+            Long unitPrice = prescriptionItem.getMedication() != null
+                    ? prescriptionItem.getMedication().getUnitPrice()
+                    : null;
+            if (unitPrice == null || unitPrice < 0) {
+                throw new ApiException(
+                        ErrorCode.INVALID_REQUEST,
+                        "Thuốc " + prescriptionItem.getMedicationNameSnapshot() + " chưa có đơn giá bán"
+                );
+            }
+
+            long itemSubtotal = unitPrice * prescriptionItem.getQuantity();
+            totalSubtotal += itemSubtotal;
+
+            invoiceItems.add(InvoiceItem.builder()
+                    .referenceType(InvoiceItem.ReferenceType.MEDICATION)
+                    .referenceId(prescriptionItem.getMedication() != null ? prescriptionItem.getMedication().getId() : null)
+                    .sourceItemType(InvoiceItemSourceType.PRESCRIPTION_ITEM)
+                    .sourceItemId(prescriptionItem.getId())
+                    .nameSnapshot(prescriptionItem.getMedicationNameSnapshot())
+                    .unitPrice(unitPrice)
+                    .quantity(prescriptionItem.getQuantity())
+                    .taxRate(BigDecimal.ZERO)
+                    .subtotalAmount(itemSubtotal)
+                    .taxAmount(0L)
+                    .totalAmount(itemSubtotal)
+                    .build());
+        }
+
+        if (invoiceItems.isEmpty()) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "Đơn thuốc phải có ít nhất 1 thuốc để tạo hóa đơn");
+        }
+
+        PaymentStatus initialPaymentStatus = req.getPaymentMethod() == PaymentMethod.BANK_TRANSFER
+                ? PaymentStatus.PENDING_CONFIRMATION
+                : PaymentStatus.UNPAID;
+
+        Invoice invoice = Invoice.builder()
+                .code(generatePrescriptionInvoiceCode(prescription))
+                .prescription(prescription)
+                .cashier(cashier)
+                .subtotalAmount(totalSubtotal)
+                .discountAmount(0L)
+                .taxAmount(0L)
+                .totalAmount(totalSubtotal)
+                .paymentMethod(req.getPaymentMethod())
+                .paymentStatus(initialPaymentStatus)
+                .paymentReference(req.getPaymentMethod() == PaymentMethod.BANK_TRANSFER ? generatePaymentReference() : null)
+                .items(new ArrayList<>())
+                .build();
+
+        if (req.getPaymentMethod() == PaymentMethod.BANK_TRANSFER) {
+            invoice.setTransferContent(billingQrService.buildPaymentContent(invoice));
+        }
+
+        for (InvoiceItem item : invoiceItems) {
+            item.setInvoice(invoice);
+            invoice.getItems().add(item);
+        }
+
+        if (req.getPaymentMethod() == PaymentMethod.VNPAY) {
+            var init = vnpayPaymentService.init(invoice.getCode(), invoice.getTotalAmount(), req.getReturnUrl());
+            invoice.setVnpTxnRef(init.txnRef());
+            invoice.setVnpPaymentUrl(init.paymentUrl());
+        }
+
+        Invoice saved = invoiceRepository.save(invoice);
+
+        if (saved.getPaymentMethod() == PaymentMethod.BANK_TRANSFER) {
+            upsertPaymentIntent(saved, null, PaymentIntentStatus.PENDING, null, null);
+        }
+
+        invoiceStatusHistoryService.record(saved, null, saved.getPaymentStatus(), cashier, "Prescription invoice created");
+        auditLogService.log(cashier, "CREATE_INVOICE", "INVOICE", saved.getId(), null, snapshotInvoice(saved));
+        publishInvoiceCreatedRealtime(saved);
+
+        return toResponse(saved, true);
+    }
+
     private RefundCascadeResult applyRefundedState(Invoice invoice) {
+        if (invoice.getPrescription() != null) {
+            Prescription prescription = invoice.getPrescription();
+            if (prescription.getStatus() == PrescriptionStatus.DISPENSED) {
+                throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, "Đơn thuốc đã phát, không thể hoàn tiền hóa đơn thuốc");
+            }
+            if (prescription.getItems() != null) {
+                for (PrescriptionItem item : prescription.getItems()) {
+                    String reason = prescriptionItemNotRefundableReason(item);
+                    if (reason != null) {
+                        throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, reason);
+                    }
+                    item.setStatus(PrescriptionItemStatus.REFUNDED);
+                    item.setRefundedAt(LocalDateTime.now());
+                }
+            }
+            if (prescription.getStatus() == PrescriptionStatus.PAID) {
+                prescription.setStatus(PrescriptionStatus.CANCELLED);
+            }
+            return new RefundCascadeResult(null, null, null);
+        }
+
+        if (invoice.getServiceOrder() == null) {
+            throw new ApiException(ErrorCode.INVOICE_INVALID_STATUS, "Hóa đơn không liên kết phiếu chỉ định hoặc đơn thuốc");
+        }
+
         ServiceOrder order = orderRepository.findWithLockById(invoice.getServiceOrder().getId())
                 .orElseThrow(() -> new ApiException(ErrorCode.SERVICE_ORDER_NOT_FOUND));
+
+        validateLegacyServiceOrderFullRefund(order);
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -1026,6 +2183,7 @@ public class BillingService {
 
         for (ServiceOrderItem item : order.getItems()) {
             item.setStatus(ServiceOrderItemStatus.CANCELLED);
+            item.setRefundedAt(now);
             if (item.getCancelledAt() == null) {
                 item.setCancelledAt(now);
             }
@@ -1035,18 +2193,8 @@ public class BillingService {
         AppointmentStatus previousAppointmentStatus = null;
         if (order.getEncounter() != null) {
             previousEncounterStatus = order.getEncounter().getStatus();
-            if (previousEncounterStatus != EncounterStatus.CANCELLED) {
-                if (previousEncounterStatus == EncounterStatus.COMPLETED) {
-                    order.getEncounter().setCompletedAt(null);
-                    Appointment appointment = order.getEncounter().getAppointment();
-                    if (appointment != null) {
-                        previousAppointmentStatus = appointment.getStatus();
-                        appointment.setStatus(AppointmentStatus.CHECKED_IN);
-                        appointment.setCompletedAt(null);
-                    }
-                    order.getEncounter().setStatus(EncounterStatus.REOPENED);
-                }
-
+            if (previousEncounterStatus != EncounterStatus.CANCELLED
+                    && previousEncounterStatus != EncounterStatus.COMPLETED) {
                 EncounterStatus nextEncounterStatus = encounterWorkflowService.resolveStatus(order.getEncounter());
                 order.getEncounter().setStatus(nextEncounterStatus);
             }
@@ -1055,8 +2203,28 @@ public class BillingService {
         return new RefundCascadeResult(order, previousEncounterStatus, previousAppointmentStatus);
     }
 
+    private void validateLegacyServiceOrderFullRefund(ServiceOrder order) {
+        if (order.getItems() == null) {
+            return;
+        }
+        for (ServiceOrderItem item : order.getItems()) {
+            ServiceResult result = item.getId() != null
+                    ? serviceResultRepository.findByServiceOrderItem_Id(item.getId()).orElse(null)
+                    : null;
+            String reason = serviceItemNotRefundableReason(item, result);
+            if (reason != null) {
+                throw new ApiException(ErrorCode.REFUND_NOT_ALLOWED, reason);
+            }
+        }
+    }
+
     private void publishRefundRealtime(Invoice invoice, RefundCascadeResult cascadeResult) {
         ServiceOrder order = cascadeResult.order();
+        if (order == null && invoice.getPrescription() != null) {
+            publishPrescriptionRefundRealtime(invoice);
+            return;
+        }
+
         var departmentCodes = order.getItems().stream()
                 .map(ServiceOrderItem::getAssignedDepartmentCode)
                 .filter(code -> code != null && !code.isBlank())
@@ -1117,6 +2285,42 @@ public class BillingService {
         });
     }
 
+    private void publishPrescriptionRefundRealtime(Invoice invoice) {
+        Prescription prescription = invoice.getPrescription();
+        Long encounterId = prescription.getEncounter() != null ? prescription.getEncounter().getId() : null;
+        Long branchId = prescription.getEncounter() != null && prescription.getEncounter().getBranch() != null
+                ? prescription.getEncounter().getBranch().getId()
+                : null;
+        String patientName = prescription.getEncounter() != null ? prescription.getEncounter().getPatientFullNameSnapshot() : null;
+        Long invoiceId = invoice.getId();
+        String invoiceCode = invoice.getCode();
+
+        afterCommitExecutor.execute(() -> {
+            if (encounterId != null) {
+                realtimeEventPublisher.publishEncounterChannel(
+                        encounterId,
+                        "PRESCRIPTION_PAYMENT_REFUNDED",
+                        Map.of(
+                                "prescriptionId", prescription.getId(),
+                                "prescriptionCode", prescription.getCode(),
+                                "invoiceId", invoiceId,
+                                "invoiceCode", invoiceCode
+                        )
+                );
+            }
+            realtimeEventPublisher.publishCashierOrderEvent(
+                    branchId,
+                    "PRESCRIPTION_INVOICE_REFUNDED",
+                    null,
+                    prescription.getCode(),
+                    patientName,
+                    invoice.getTotalAmount(),
+                    invoiceId,
+                    invoiceCode
+            );
+        });
+    }
+
     private void publishAppointmentRealtime(Appointment appointment, AppointmentStatus previousStatus) {
         if (appointment == null || appointment.getBranch() == null || appointment.getVisitDate() == null) {
             return;
@@ -1157,6 +2361,153 @@ public class BillingService {
             return user.getDoctorProfile().getFullName();
         }
         return user.getEmail();
+    }
+
+    private record RefundableEvaluation(
+            Invoice invoice,
+            InvoiceItem invoiceItem,
+            ServiceOrderItem serviceOrderItem,
+            ServiceResult serviceResult,
+            PrescriptionItem prescriptionItem,
+            long alreadyRefundedAmount,
+            long refundableAmount,
+            boolean refundable,
+            String notRefundableReason
+    ) {
+        static RefundableEvaluation refundable(
+                Invoice invoice,
+                InvoiceItem invoiceItem,
+                ServiceOrderItem serviceOrderItem,
+                ServiceResult serviceResult,
+                long alreadyRefundedAmount,
+                long refundableAmount
+        ) {
+            return new RefundableEvaluation(
+                    invoice,
+                    invoiceItem,
+                    serviceOrderItem,
+                    serviceResult,
+                    null,
+                    alreadyRefundedAmount,
+                    refundableAmount,
+                    true,
+                    null
+            );
+        }
+
+        static RefundableEvaluation refundable(
+                Invoice invoice,
+                InvoiceItem invoiceItem,
+                PrescriptionItem prescriptionItem,
+                long alreadyRefundedAmount,
+                long refundableAmount
+        ) {
+            return new RefundableEvaluation(
+                    invoice,
+                    invoiceItem,
+                    null,
+                    null,
+                    prescriptionItem,
+                    alreadyRefundedAmount,
+                    refundableAmount,
+                    true,
+                    null
+            );
+        }
+
+        static RefundableEvaluation notRefundable(
+                Invoice invoice,
+                InvoiceItem invoiceItem,
+                long alreadyRefundedAmount,
+                long refundableAmount,
+                String reason
+        ) {
+            return new RefundableEvaluation(
+                    invoice,
+                    invoiceItem,
+                    null,
+                    null,
+                    null,
+                    alreadyRefundedAmount,
+                    refundableAmount,
+                    false,
+                    reason
+            );
+        }
+
+        static RefundableEvaluation notRefundable(
+                Invoice invoice,
+                InvoiceItem invoiceItem,
+                ServiceOrderItem serviceOrderItem,
+                ServiceResult serviceResult,
+                long alreadyRefundedAmount,
+                long refundableAmount,
+                String reason
+        ) {
+            return new RefundableEvaluation(
+                    invoice,
+                    invoiceItem,
+                    serviceOrderItem,
+                    serviceResult,
+                    null,
+                    alreadyRefundedAmount,
+                    refundableAmount,
+                    false,
+                    reason
+            );
+        }
+
+        static RefundableEvaluation notRefundable(
+                Invoice invoice,
+                InvoiceItem invoiceItem,
+                PrescriptionItem prescriptionItem,
+                long alreadyRefundedAmount,
+                long refundableAmount,
+                String reason
+        ) {
+            return new RefundableEvaluation(
+                    invoice,
+                    invoiceItem,
+                    null,
+                    null,
+                    prescriptionItem,
+                    alreadyRefundedAmount,
+                    refundableAmount,
+                    false,
+                    reason
+            );
+        }
+
+        RefundableInvoiceItemResponse toResponse() {
+            String currentStatus = null;
+            String resultStatus = null;
+            String group = invoiceItem.getReferenceType() == InvoiceItem.ReferenceType.MEDICATION
+                    ? "MEDICATION"
+                    : "SERVICE";
+            if (serviceOrderItem != null) {
+                currentStatus = serviceOrderItem.getStatus() != null ? serviceOrderItem.getStatus().name() : null;
+                resultStatus = serviceOrderItem.getResultStatus() != null ? serviceOrderItem.getResultStatus().name() : null;
+            } else if (prescriptionItem != null) {
+                currentStatus = prescriptionItem.getStatus() != null ? prescriptionItem.getStatus().name() : null;
+            }
+
+            return RefundableInvoiceItemResponse.builder()
+                    .invoiceItemId(invoiceItem.getId())
+                    .sourceItemType(invoiceItem.getSourceItemType() != null ? invoiceItem.getSourceItemType().name() : null)
+                    .sourceItemId(invoiceItem.getSourceItemId())
+                    .referenceType(invoiceItem.getReferenceType() != null ? invoiceItem.getReferenceType().name() : null)
+                    .name(invoiceItem.getNameSnapshot())
+                    .quantity(invoiceItem.getQuantity())
+                    .totalAmount(invoiceItem.getTotalAmount())
+                    .alreadyRefundedAmount(alreadyRefundedAmount)
+                    .refundableAmount(refundable ? refundableAmount : 0L)
+                    .refundable(refundable)
+                    .notRefundableReason(notRefundableReason)
+                    .currentStatus(currentStatus)
+                    .resultStatus(resultStatus)
+                    .group(group)
+                    .build();
+        }
     }
 
     private record RefundCascadeResult(

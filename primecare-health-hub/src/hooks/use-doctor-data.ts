@@ -35,6 +35,8 @@ import { getApiErrorMessage } from '@/lib/error-utils';
 
 export const doctorQueryKeys = {
   appointments: (params?: Record<string, string>) => ['doctor', 'appointments', params] as const,
+  waitingAppointments: (params?: Record<string, string>) =>
+    ['doctor', 'appointments', 'waiting', params] as const,
   appointmentSummary: (params?: Record<string, string>) =>
     ['doctor', 'appointments', 'summary', params] as const,
   encounter: (id: string) => ['doctor', 'encounter', id] as const,
@@ -62,6 +64,7 @@ type SaveEncounterDiagnosesInput =
 
 function invalidateDoctorWorklist(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ['doctor', 'appointments'] });
+  qc.invalidateQueries({ queryKey: ['doctor', 'appointments', 'waiting'] });
   qc.invalidateQueries({ queryKey: ['doctor', 'appointments', 'summary'] });
 }
 
@@ -168,6 +171,49 @@ export function useDoctorAppointments(params?: Record<string, string>) {
       };
     },
     enabled: !!params?.from && !!params?.to,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+export function useDoctorWaitingAppointments(params?: Record<string, string>, enabled = true) {
+  return useQuery({
+    queryKey: doctorQueryKeys.waitingAppointments(params),
+    queryFn: async () => {
+      try {
+        const { data } = await apiClient.get('/doctor/appointments/waiting', { params });
+        const page = unwrapPage<unknown>(data);
+        return {
+          ...page,
+          items: page.items.map(normalizeAppointment),
+        };
+      } catch (error) {
+        const status = (error as AxiosError).response?.status;
+        if (status !== 404 && status !== 405 && status !== 501) {
+          throw error;
+        }
+
+        const visitDate = params?.visitDate;
+        const { data } = await apiClient.get('/doctor/appointments', {
+          params: {
+            from: visitDate,
+            to: visitDate,
+            page: params?.page ?? '0',
+            size: params?.size ?? '50',
+          },
+        });
+        const page = unwrapPage<unknown>(data);
+        const items = page.items
+          .map(normalizeAppointment)
+          .filter((appointment) => appointment.status === 'CHECKED_IN' && !appointment.activeEncounterId);
+        return {
+          ...page,
+          items,
+        };
+      }
+    },
+    enabled: enabled && !!params?.visitDate,
     staleTime: 30_000,
     refetchOnWindowFocus: false,
     placeholderData: (previousData) => previousData,

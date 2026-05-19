@@ -11,6 +11,10 @@ import com.PrimeCare.PrimeCare.shared.enums.BranchSessionType;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentSourceType;
 import com.PrimeCare.PrimeCare.shared.enums.ArrivalStatus;
 import com.PrimeCare.PrimeCare.shared.enums.Gender;
+import com.PrimeCare.PrimeCare.shared.enums.AppointmentCancellationReasonType;
+import com.PrimeCare.PrimeCare.shared.enums.AppointmentContactStatus;
+import com.PrimeCare.PrimeCare.shared.enums.AppointmentFollowUpType;
+import com.PrimeCare.PrimeCare.shared.enums.AppointmentPatientResponseStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -96,6 +100,14 @@ public class Appointment extends BaseEntity {
     @Column(name = "patient_email", length = 255)
     private String patientEmail;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "contact_status", nullable = false, length = 64)
+    private AppointmentContactStatus contactStatus;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "patient_response_status", nullable = false, length = 64)
+    private AppointmentPatientResponseStatus patientResponseStatus;
+
     @Column(name = "patient_dob")
     private LocalDate patientDob;
 
@@ -117,6 +129,73 @@ public class Appointment extends BaseEntity {
 
     @Column(name = "triage_note", columnDefinition = "TEXT")
     private String triageNote;
+
+    @Column(name = "pre_triage_level", length = 32)
+    private String preTriageLevel;
+
+    @Column(name = "pre_triage_priority", length = 32)
+    private String preTriagePriority;
+
+    @Column(name = "pre_triage_flags_json", columnDefinition = "TEXT")
+    private String preTriageFlagsJson;
+
+    @Column(name = "pre_triage_reasons_json", columnDefinition = "TEXT")
+    private String preTriageReasonsJson;
+
+    @Column(name = "pre_triage_summary", columnDefinition = "TEXT")
+    private String preTriageSummary;
+
+    @Column(name = "pre_triage_assessed_at")
+    private LocalDateTime preTriageAssessedAt;
+
+    @Column(name = "symptom_onset", length = 32)
+    private String symptomOnset;
+
+    @Column(name = "chronic_conditions_json", columnDefinition = "TEXT")
+    private String chronicConditionsJson;
+
+    @Column(name = "chronic_condition_others_json", columnDefinition = "TEXT")
+    private String chronicConditionOthersJson;
+
+    @Column(name = "functional_impact", length = 32)
+    private String functionalImpact;
+
+    @Column(name = "red_flag_selections_json", columnDefinition = "TEXT")
+    private String redFlagSelectionsJson;
+
+    @Column(name = "pre_triage_matched_terms_json", columnDefinition = "TEXT")
+    private String preTriageMatchedTermsJson;
+
+    @Column(name = "pre_triage_matched_rules_json", columnDefinition = "TEXT")
+    private String preTriageMatchedRulesJson;
+
+    @Column(name = "pre_triage_source", length = 32)
+    private String preTriageSource;
+
+    @Column(name = "pre_triage_confidence_level", length = 32)
+    private String preTriageConfidenceLevel;
+
+    @Column(name = "pre_triage_knowledge_base_version", length = 64)
+    private String preTriageKnowledgeBaseVersion;
+
+    @Column(name = "pre_triage_ruleset_version", length = 64)
+    private String preTriageRulesetVersion;
+
+    @Column(name = "pre_triage_ai_model_version", length = 128)
+    private String preTriageAiModelVersion;
+
+    @Column(name = "triage_review_status", length = 32)
+    private String triageReviewStatus;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "triage_reviewed_by")
+    private User triageReviewedBy;
+
+    @Column(name = "triage_reviewed_at")
+    private LocalDateTime triageReviewedAt;
+
+    @Column(name = "triage_override_reason", length = 500)
+    private String triageOverrideReason;
 
     @Column(name = "insurance_note", length = 500)
     private String insuranceNote;
@@ -175,6 +254,10 @@ public class Appointment extends BaseEntity {
     @Column(name = "cancel_reason", length = 500)
     private String cancelReason;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "cancellation_reason_type", length = 64)
+    private AppointmentCancellationReasonType cancellationReasonType;
+
     // staff claim processing
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "processing_by")
@@ -194,6 +277,14 @@ public class Appointment extends BaseEntity {
     @Column(name = "checked_in_at")
     private LocalDateTime checkedInAt;
 
+    @Builder.Default
+    @Column(name = "checked_in_late", nullable = false)
+    private Boolean checkedInLate = false;
+
+    @Builder.Default
+    @Column(name = "late_minutes", nullable = false)
+    private Integer lateMinutes = 0;
+
     // no-show
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "no_show_marked_by")
@@ -207,6 +298,10 @@ public class Appointment extends BaseEntity {
 
     @Column(name = "follow_up_pending")
     private Boolean followUpPending;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "follow_up_type", length = 64)
+    private AppointmentFollowUpType followUpType;
 
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
@@ -232,5 +327,9 @@ public class Appointment extends BaseEntity {
         if (followUpPending == null) followUpPending = false;
         if (sourceType == null) sourceType = AppointmentSourceType.PUBLIC_BOOKING;
         if (arrivalStatus == null) arrivalStatus = ArrivalStatus.NOT_ARRIVED;
+        if (contactStatus == null) contactStatus = AppointmentContactStatus.PHONE_PROVIDED;
+        if (patientResponseStatus == null) patientResponseStatus = AppointmentPatientResponseStatus.NONE;
+        if (checkedInLate == null) checkedInLate = false;
+        if (lateMinutes == null) lateMinutes = 0;
     }
 }

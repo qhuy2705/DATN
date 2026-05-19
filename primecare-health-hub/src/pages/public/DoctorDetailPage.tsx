@@ -29,6 +29,12 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import apiClient from '@/lib/api-client';
 import { normalizeAvailability, unwrapApiData } from '@/lib/api-adapters';
+import {
+  getDoctorPublicBookingLabel,
+  getDoctorUnavailableBookingMessage,
+  getPublicDoctorBookingSpecialty,
+  isPublicDoctorBookable,
+} from '@/lib/doctor-readiness';
 import type {
   ApiResponse,
   AvailabilitySlot,
@@ -139,7 +145,7 @@ export default function DoctorDetailPage() {
   const { i18n } = useTranslation();
   const isEn = i18n.language.startsWith('en');
   const locale = isEn ? 'en-US' : 'vi-VN';
-  const { data: doctor, isLoading } = useDoctor(id);
+  const { data: doctor, isLoading, isError } = useDoctor(id);
   const [availabilityPreviewRequested, setAvailabilityPreviewRequested] = useState(false);
 
   const expertiseItems = useMemo(() => splitContent(doctor?.expertise), [doctor?.expertise]);
@@ -150,21 +156,34 @@ export default function DoctorDetailPage() {
   const nextAvailableShort = formatShortDate(doctor?.nextAvailableDate, locale);
   const profileUpdatedAt = formatDateTime(doctor?.updatedAt, locale);
 
-  const doctorSpecialtyId = doctor?.specialtyId || doctor?.specialtyIds?.[0] || '';
+  const bookingSpecialty = getPublicDoctorBookingSpecialty(doctor);
+  const doctorSpecialtyId = bookingSpecialty?.id ?? '';
+  const doctorSpecialtyName = bookingSpecialty?.name || doctor?.specialtyName || '';
   const doctorBranchId = doctor?.branchId || '';
+  const doctorBaseBookable = isPublicDoctorBookable(doctor);
+  const doctorCanBook = doctorBaseBookable && Boolean(doctorBranchId && doctorSpecialtyId);
+  const unavailableBookingMessage = !doctorBaseBookable
+    ? getDoctorUnavailableBookingMessage(isEn)
+    : !doctorSpecialtyId
+      ? isEn
+        ? 'This doctor does not have a public booking specialty right now.'
+        : 'Bác sĩ hiện chưa có chuyên khoa công khai hợp lệ để đặt lịch.'
+      : isEn
+        ? 'This doctor is missing public branch information for booking.'
+        : 'Bác sĩ hiện thiếu thông tin cơ sở công khai để đặt lịch.';
 
   useEffect(() => {
     setAvailabilityPreviewRequested(false);
   }, [doctor?.id]);
 
   const schedulePreviewInputs = useMemo(() => {
-    if (!doctor?.id || !doctorBranchId || !doctorSpecialtyId) return [] as Array<{ visitDate: string; session: BranchSessionType }>;
+    if (!doctorCanBook || !doctor?.id || !doctorBranchId || !doctorSpecialtyId) return [] as Array<{ visitDate: string; session: BranchSessionType }>;
     const startDate = doctor.nextAvailableDate || new Date().toISOString().slice(0, 10);
     return Array.from({ length: 3 }, (_, index) => addDays(startDate, index)).flatMap((visitDate) => [
       { visitDate, session: 'AM' as const },
       { visitDate, session: 'PM' as const },
     ]);
-  }, [doctor?.id, doctor?.nextAvailableDate, doctorBranchId, doctorSpecialtyId]);
+  }, [doctor?.id, doctor?.nextAvailableDate, doctorBranchId, doctorCanBook, doctorSpecialtyId]);
 
   const availabilityPreviewQueries = useQueries({
     queries: schedulePreviewInputs.map((input) => ({
@@ -186,7 +205,7 @@ export default function DoctorDetailPage() {
           slots: normalizeAvailability(unwrapApiData(data)),
         };
       },
-      enabled: availabilityPreviewRequested && Boolean(doctor?.id && doctorBranchId && doctorSpecialtyId),
+      enabled: doctorCanBook && availabilityPreviewRequested && Boolean(doctor?.id && doctorBranchId && doctorSpecialtyId),
       staleTime: 60_000,
       refetchOnWindowFocus: false,
       placeholderData: (previousData: { visitDate: string; session: BranchSessionType; slots: AvailabilitySlot[] } | undefined) => previousData,
@@ -241,9 +260,9 @@ export default function DoctorDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="section-padding bg-[#F5F7FB]">
+      <div className="section-padding bg-muted/20">
         <div className="container-wide max-w-[1240px]">
-          <div className="rounded-[32px] border border-border/70 bg-white/90 p-8 text-center text-muted-foreground shadow-sm">
+          <div className="rounded-[32px] border border-border/70 bg-card/95 p-8 text-center text-muted-foreground shadow-sm">
             {isEn ? 'Loading doctor profile...' : 'Đang tải hồ sơ bác sĩ...'}
           </div>
         </div>
@@ -251,18 +270,18 @@ export default function DoctorDetailPage() {
     );
   }
 
-  if (!doctor) {
+  if (isError || !doctor) {
     return (
-      <div className="section-padding bg-[#F5F7FB]">
+      <div className="section-padding bg-muted/20">
         <div className="container-wide max-w-[1240px]">
-          <div className="rounded-[32px] border border-dashed border-border/70 bg-white/90 p-8 text-center shadow-sm">
+          <div className="rounded-[32px] border border-dashed border-border/70 bg-card/95 p-8 text-center shadow-sm">
             <p className="text-lg font-semibold text-foreground">
-              {isEn ? 'Doctor profile not found.' : 'Không tìm thấy hồ sơ bác sĩ.'}
+              {isEn ? 'This doctor is unavailable for booking.' : 'Bác sĩ hiện không khả dụng để đặt lịch.'}
             </p>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
               {isEn
-                ? 'Please return to the doctor directory to review another public profile.'
-                : 'Vui lòng quay lại danh mục bác sĩ để xem một hồ sơ công khai khác.'}
+                ? 'Please return to the doctor directory and choose another available doctor.'
+                : 'Vui lòng quay lại danh mục bác sĩ và chọn bác sĩ khác đang sẵn sàng nhận lịch.'}
             </p>
           </div>
         </div>
@@ -271,7 +290,7 @@ export default function DoctorDetailPage() {
   }
 
   const profileBadges = [
-    doctor.specialtyName,
+    doctorSpecialtyName,
     doctor.branchName,
     doctor.yearsOfExperience ? `${doctor.yearsOfExperience} ${isEn ? 'years experience' : 'năm kinh nghiệm'}` : null,
   ].filter(Boolean) as string[];
@@ -292,10 +311,8 @@ export default function DoctorDetailPage() {
   if (doctorBranchId) availabilityParams.set('branchId', doctorBranchId);
   if (doctorSpecialtyId) availabilityParams.set('specialtyId', doctorSpecialtyId);
   const availabilityPath = `/availability?${availabilityParams.toString()}`;
-  const bookingStatusText = doctor.bookable === false
-    ? isEn
-      ? 'Online booking status is being updated for this profile.'
-      : 'Trạng thái đặt lịch trực tuyến của hồ sơ này đang được cập nhật.'
+  const bookingStatusText = !doctorCanBook
+    ? unavailableBookingMessage
     : isEn
       ? 'Online booking can continue from the live slots shown below.'
       : 'Bạn có thể tiếp tục đặt lịch từ các khung giờ trống hiển thị bên dưới.';
@@ -304,7 +321,7 @@ export default function DoctorDetailPage() {
     : 'Hồ sơ công khai này đang được hoàn thiện thêm. Bạn vẫn có thể xem chuyên khoa, cơ sở và lịch trống hiện tại ở bên dưới.');
 
   return (
-    <div className="section-padding bg-[#F5F7FB]">
+    <div className="section-padding bg-muted/20">
       <div className="container-wide max-w-[1240px] space-y-8">
         <ScrollReveal>
           <div className="relative overflow-hidden rounded-[34px] border border-border/70 bg-card/95 p-6 shadow-card md:p-8">
@@ -373,7 +390,7 @@ export default function DoctorDetailPage() {
                           {isEn ? 'Specialty' : 'Chuyên khoa tiếp nhận'}
                         </div>
                         <p className="mt-3 text-base font-semibold text-foreground">
-                          {doctor.specialtyName || (isEn ? 'Specialty is being updated' : 'Đang cập nhật chuyên khoa')}
+                          {doctorSpecialtyName || (isEn ? 'Specialty is being updated' : 'Đang cập nhật chuyên khoa')}
                         </p>
                         <p className="mt-2 text-sm leading-6 text-muted-foreground">
                           {expertiseHighlights.length
@@ -469,18 +486,21 @@ export default function DoctorDetailPage() {
                           {isEn ? 'Booking status' : 'Tình trạng đặt lịch'}
                         </p>
                         <p className="mt-2 text-sm font-semibold text-foreground">
-                          {doctor.bookable === false
-                            ? isEn
-                              ? 'Temporarily unavailable online'
-                              : 'Tạm thời chưa mở trực tuyến'
-                            : isEn
-                              ? 'Available from live slots'
-                              : 'Có thể tiếp tục từ lịch trống'}
+                          {doctorCanBook ? getDoctorPublicBookingLabel(doctor, isEn) : unavailableBookingMessage}
                         </p>
                       </div>
                     </div>
 
-                    {!availabilityPreviewRequested ? (
+                    {!doctorCanBook ? (
+                      <div className="mt-6 rounded-[1.5rem] border border-dashed border-warning/30 bg-warning/10 p-6 text-sm text-warning">
+                        <p className="font-semibold">{unavailableBookingMessage}</p>
+                        <p className="mt-2 leading-7">
+                          {isEn
+                            ? 'Please choose another available doctor from the public directory.'
+                            : 'Vui lòng chọn bác sĩ khác đang sẵn sàng nhận lịch trong danh mục công khai.'}
+                        </p>
+                      </div>
+                    ) : !availabilityPreviewRequested ? (
                       <div className="mt-6 rounded-[1.5rem] border border-dashed border-border/70 bg-background/80 p-6 text-sm text-muted-foreground">
                         <p className="font-semibold text-foreground">
                           {isEn ? 'Availability preview is loaded on demand.' : 'Lịch trống sẽ chỉ tải khi bạn cần xem.'}
@@ -610,7 +630,7 @@ export default function DoctorDetailPage() {
                               <div className="rounded-2xl bg-background px-4 py-3">
                                 <p className="font-medium text-foreground">{isEn ? 'Specialty' : 'Chuyên khoa'}</p>
                                 <p className="mt-1 leading-6">
-                                  {doctor.specialtyName || (isEn ? 'Specialty information is being updated.' : 'Thông tin chuyên khoa đang được cập nhật.')}
+                                {doctorSpecialtyName || (isEn ? 'Specialty information is being updated.' : 'Thông tin chuyên khoa đang được cập nhật.')}
                                 </p>
                               </div>
 
@@ -695,10 +715,10 @@ export default function DoctorDetailPage() {
                               </div>
                             ) : (
                               <p className="mt-4 text-sm leading-7 text-muted-foreground">
-                                {doctor.specialtyName
+                                {doctorSpecialtyName
                                   ? isEn
-                                    ? `This profile is currently published under ${doctor.specialtyName}. More detailed clinical focus will appear here when the public profile is expanded.`
-                                    : `Hồ sơ này hiện đang công khai dưới chuyên khoa ${doctor.specialtyName}. Phần mô tả chuyên môn chi tiết sẽ xuất hiện tại đây khi hồ sơ được bổ sung thêm.`
+                                    ? `This profile is currently published under ${doctorSpecialtyName}. More detailed clinical focus will appear here when the public profile is expanded.`
+                                    : `Hồ sơ này hiện đang công khai dưới chuyên khoa ${doctorSpecialtyName}. Phần mô tả chuyên môn chi tiết sẽ xuất hiện tại đây khi hồ sơ được bổ sung thêm.`
                                   : isEn
                                     ? 'Detailed clinical focus is being updated.'
                                     : 'Đang cập nhật thêm thông tin chuyên môn chi tiết.'}
@@ -722,10 +742,10 @@ export default function DoctorDetailPage() {
                               </div>
                             ) : (
                               <div className="mt-4 rounded-2xl border border-dashed border-border/70 bg-background/80 p-4 text-sm leading-6 text-muted-foreground">
-                                {doctor.specialtyName
+                                {doctorSpecialtyName
                                   ? isEn
-                                    ? `Service details for ${doctor.specialtyName} are still being prepared. Use the booking and schedule area above to continue with this doctor.`
-                                    : `Chi tiết dịch vụ cho chuyên khoa ${doctor.specialtyName} đang được chuẩn bị thêm. Bạn có thể dùng phần đặt lịch và lịch trống ở phía trên để tiếp tục với bác sĩ này.`
+                                    ? `Service details for ${doctorSpecialtyName} are still being prepared. Use the booking and schedule area above to continue with this doctor.`
+                                    : `Chi tiết dịch vụ cho chuyên khoa ${doctorSpecialtyName} đang được chuẩn bị thêm. Bạn có thể dùng phần đặt lịch và lịch trống ở phía trên để tiếp tục với bác sĩ này.`
                                   : isEn
                                     ? 'Featured service details are still being prepared.'
                                     : 'Chi tiết dịch vụ tiêu biểu đang được chuẩn bị thêm.'}
@@ -829,12 +849,20 @@ export default function DoctorDetailPage() {
                       {isEn ? 'Next step' : 'Bước tiếp theo'}
                     </p>
                     <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-                      {isEn ? `Continue to booking for ${doctor.fullName}` : `Tiếp tục đặt lịch với ${doctor.fullName}`}
+                      {doctorCanBook
+                        ? isEn
+                          ? `Continue to booking for ${doctor.fullName}`
+                          : `Tiếp tục đặt lịch với ${doctor.fullName}`
+                        : isEn
+                          ? 'Booking is unavailable'
+                          : 'Chưa sẵn sàng nhận lịch'}
                     </h2>
                     <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                      {isEn
-                        ? 'Open the booking flow if you are ready to confirm the branch, date, and time slot for this doctor. Use the full schedule page if you want to browse more availability first.'
-                        : 'Mở luồng đặt lịch khi bạn đã sẵn sàng xác nhận cơ sở, ngày khám và khung giờ cho bác sĩ này. Dùng trang lịch đầy đủ nếu bạn muốn xem thêm nhiều khung giờ trước.'}
+                      {doctorCanBook
+                        ? isEn
+                          ? 'Open the booking flow if you are ready to confirm the branch, date, and time slot for this doctor. Use the full schedule page if you want to browse more availability first.'
+                          : 'Mở luồng đặt lịch khi bạn đã sẵn sàng xác nhận cơ sở, ngày khám và khung giờ cho bác sĩ này. Dùng trang lịch đầy đủ nếu bạn muốn xem thêm nhiều khung giờ trước.'
+                        : unavailableBookingMessage}
                     </p>
 
                     <div className="mt-5 rounded-[1.5rem] border border-primary/10 bg-background/90 p-4">
@@ -867,13 +895,7 @@ export default function DoctorDetailPage() {
                           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                           <div>
                             <p className="font-medium text-foreground">
-                              {doctor.bookable === false
-                                ? isEn
-                                  ? 'Booking status updating'
-                                  : 'Trạng thái đặt lịch đang cập nhật'
-                                : isEn
-                                  ? 'Live slot booking available'
-                                  : 'Có thể tiếp tục từ lịch trống'}
+                              {doctorCanBook ? getDoctorPublicBookingLabel(doctor, isEn) : unavailableBookingMessage}
                             </p>
                             <p className="mt-1 leading-6">{bookingStatusText}</p>
                           </div>
@@ -881,22 +903,38 @@ export default function DoctorDetailPage() {
                       </div>
                     </div>
 
-                    <Button asChild className="mt-5 h-12 w-full rounded-2xl shadow-[0_14px_30px_rgba(8,46,95,0.14)]">
-                      <Link to={bookingPath}>
-                        <Calendar className="mr-2 h-4 w-4" />
-                        {isEn ? 'Open booking flow' : 'Mở luồng đặt lịch'}
-                      </Link>
-                    </Button>
+                    {doctorCanBook ? (
+                      <Button asChild className="mt-5 h-12 w-full rounded-2xl shadow-[0_14px_30px_rgba(8,46,95,0.14)]">
+                        <Link to={bookingPath}>
+                          <Calendar className="mr-2 h-4 w-4" />
+                          {isEn ? 'Book appointment' : 'Đặt lịch'}
+                        </Link>
+                      </Button>
+                    ) : (
+                      <Button disabled className="mt-5 h-12 w-full rounded-2xl">
+                        {isEn ? 'Booking unavailable' : 'Chưa sẵn sàng nhận lịch'}
+                      </Button>
+                    )}
 
-                    <Button
-                      variant="outline"
-                      asChild
-                      className="mt-3 h-12 w-full rounded-2xl border-border/70 bg-background/80"
-                    >
-                      <Link to={availabilityPath}>
-                        {isEn ? 'View full availability' : 'Xem toàn bộ lịch trống'}
-                      </Link>
-                    </Button>
+                    {doctorCanBook ? (
+                      <Button
+                        variant="outline"
+                        asChild
+                        className="mt-3 h-12 w-full rounded-2xl border-border/70 bg-background/80"
+                      >
+                        <Link to={availabilityPath}>
+                          {isEn ? 'View full availability' : 'Xem toàn bộ lịch trống'}
+                        </Link>
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        disabled
+                        className="mt-3 h-12 w-full rounded-2xl border-border/70 bg-background/80"
+                      >
+                        {isEn ? 'Availability unavailable' : 'Chưa có lịch trống công khai'}
+                      </Button>
+                    )}
                   </div>
 
                   <div className="rounded-[30px] border border-border/70 bg-background/95 p-5 shadow-sm">

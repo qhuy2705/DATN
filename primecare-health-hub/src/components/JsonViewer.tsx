@@ -1,22 +1,25 @@
 interface JsonViewerProps {
-  data: string | undefined | null;
+  data: unknown;
   title?: string;
 }
 
 export function JsonViewer({ data, title }: JsonViewerProps) {
-  if (!data) return <p className="text-sm text-muted-foreground italic">—</p>;
+  if (data === null || typeof data === 'undefined' || data === '') {
+    return <p className="text-sm italic text-muted-foreground">-</p>;
+  }
 
   let formatted: string;
   try {
-    formatted = JSON.stringify(JSON.parse(data), null, 2);
+    const value = typeof data === 'string' ? JSON.parse(data) : data;
+    formatted = JSON.stringify(value, null, 2) ?? String(value);
   } catch {
-    formatted = data;
+    formatted = String(data);
   }
 
   return (
     <div>
-      {title && <p className="text-sm font-medium text-foreground mb-2">{title}</p>}
-      <pre className="text-xs bg-muted rounded-lg p-4 overflow-x-auto max-h-64 font-mono text-foreground/80 leading-relaxed">
+      {title && <p className="mb-2 text-sm font-medium text-foreground">{title}</p>}
+      <pre className="max-h-72 overflow-auto rounded-lg bg-muted p-4 font-mono text-xs leading-relaxed text-foreground/80">
         {formatted}
       </pre>
     </div>

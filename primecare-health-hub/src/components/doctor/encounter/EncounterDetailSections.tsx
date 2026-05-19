@@ -35,6 +35,12 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { openProtectedFile } from '@/lib/download-file';
 import { getApiErrorMessage } from '@/lib/error-utils';
+import {
+  getRefundReason,
+  getRefundedAt,
+  isRefundedOrCancelledItem,
+  SERVICE_REFUNDED_LABEL,
+} from '@/lib/refund-status';
 import { useDoctorEncounterTimeline } from '@/hooks/use-doctor-data';
 import type {
   Encounter,
@@ -274,7 +280,7 @@ function StructuredServiceResult({ item }: { item: ServiceOrderItem }) {
                     return (
                       <tr
                         key={`${item.id}-row-${index}`}
-                        className={abnormal ? 'border-t bg-amber-50/80' : 'border-t'}
+                        className={abnormal ? 'border-t bg-warning/10' : 'border-t'}
                       >
                         <td className="px-3 py-2">{String(row.parameter ?? '—')}</td>
                         <td className="px-3 py-2 font-medium text-foreground">{String(row.result ?? '—')}</td>
@@ -284,7 +290,7 @@ function StructuredServiceResult({ item }: { item: ServiceOrderItem }) {
                           <span
                             className={
                               abnormal
-                                ? 'rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900'
+                                ? 'rounded-full border border-warning/20 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning'
                                 : ''
                             }
                           >
@@ -1190,9 +1196,14 @@ export function ServiceOrdersSection({
   onCreate: () => void;
   language?: string;
 }) {
-  const totalItems = orders.reduce((acc, order) => acc + order.items.length, 0);
+  const activeItems = orders.flatMap((order) =>
+    order.items.filter((item) => !isRefundedOrCancelledItem(item)),
+  );
+  const totalItems = activeItems.length;
   const doneItems = orders.reduce(
-    (acc, order) => acc + order.items.filter(isServiceItemDone).length,
+    (acc, order) =>
+      acc +
+      order.items.filter((item) => !isRefundedOrCancelledItem(item) && isServiceItemDone(item)).length,
     0,
   );
 
@@ -1222,7 +1233,8 @@ export function ServiceOrdersSection({
           {orders.map((order) => {
             const firstItem = order.items[0];
             const hiddenItemCount = Math.max(order.items.length - 1, 0);
-            const orderDoneItems = order.items.filter(isServiceItemDone).length;
+            const orderActiveItems = order.items.filter((item) => !isRefundedOrCancelledItem(item));
+            const orderDoneItems = orderActiveItems.filter(isServiceItemDone).length;
 
             return (
               <details key={order.id} className="group rounded-lg border bg-background/60 px-3 py-2.5">
@@ -1237,7 +1249,7 @@ export function ServiceOrdersSection({
                       {hiddenItemCount > 0 ? ` +${hiddenItemCount} dịch vụ khác` : ''}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {orderDoneItems}/{order.items.length} có kết quả
+                      {orderDoneItems}/{orderActiveItems.length} dịch vụ đang hiệu lực có kết quả
                       {order.paymentStatus ? ` · Thanh toán: ${order.paymentStatus}` : ''}
                     </p>
                   </div>
@@ -1253,28 +1265,46 @@ export function ServiceOrdersSection({
                   </div>
 
                   <div className="space-y-2">
-                    {order.items.map((item) => (
-                      <div key={item.id} className="rounded-md border bg-muted/10 px-3 py-2">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="font-medium text-foreground">
-                              {getServiceDisplayName(item, language)}
-                            </p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              SL {item.quantity} · {currency.format(item.lineTotalAmount || 0)} đ
-                            </p>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {item.status ? <StatusBadge status={item.status} /> : null}
-                            {item.resultStatus ? (
-                              <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
-                                KQ: {item.resultStatus}
-                              </span>
-                            ) : null}
+                    {order.items.map((item) => {
+                      const refunded = isRefundedOrCancelledItem(item);
+                      const refundReason = getRefundReason(item);
+                      const refundedAt = getRefundedAt(item);
+                      return (
+                        <div key={item.id} className="rounded-md border bg-muted/10 px-3 py-2">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="font-medium text-foreground">
+                                {getServiceDisplayName(item, language)}
+                              </p>
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                SL {item.quantity} · {currency.format(item.lineTotalAmount || 0)} đ
+                              </p>
+                              {refunded && (refundReason || refundedAt) ? (
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {[refundReason, refundedAt ? `Lúc ${new Date(refundedAt).toLocaleString('vi-VN')}` : '']
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </p>
+                              ) : null}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {refunded ? (
+                                <Badge variant="outline" className="text-muted-foreground">
+                                  {SERVICE_REFUNDED_LABEL}
+                                </Badge>
+                              ) : item.status ? (
+                                <StatusBadge status={item.status} />
+                              ) : null}
+                              {!refunded && item.resultStatus ? (
+                                <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+                                  KQ: {item.resultStatus}
+                                </span>
+                              ) : null}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </details>
@@ -1341,16 +1371,19 @@ export function PrescriptionSection({
   encounterId,
   canCreatePrescription,
   canEdit,
+  createBlockedReason,
 }: {
   encounterId: string;
   canCreatePrescription: boolean;
   canEdit: boolean;
+  createBlockedReason?: string;
 }) {
   return (
     <EncounterPrescriptionsPanel
       encounterId={encounterId}
       canCreatePrescription={canCreatePrescription}
       canEdit={canEdit}
+      createBlockedReason={createBlockedReason}
     />
   );
 }

@@ -9,6 +9,11 @@ import { Activity, ArrowRight, Calendar, CalendarSearch, Clock } from 'lucide-re
 import { useAvailability, useBranchSpecialties, useBranches, useDoctor, useDoctors } from '@/hooks/use-public-data';
 import { useTranslation } from 'react-i18next';
 import { toLocalDateInputValue } from '@/lib/date';
+import {
+  getDoctorUnavailableBookingMessage,
+  getPublicDoctorBookingSpecialty,
+  isPublicDoctorBookableForSpecialty,
+} from '@/lib/doctor-readiness';
 
 export default function AvailabilityPage() {
   const [searchParams] = useSearchParams();
@@ -30,7 +35,7 @@ export default function AvailabilityPage() {
     isLoading: branchSpecialtiesLoading,
     isFetching: branchSpecialtiesFetching,
   } = useBranchSpecialties(branchId);
-  const { data: doctorDetail } = useDoctor(doctorId);
+  const { data: doctorDetail, isLoading: doctorDetailLoading } = useDoctor(doctorId);
   const doctorParams = useMemo(
     () => ({
       page: '0',
@@ -40,20 +45,27 @@ export default function AvailabilityPage() {
     }),
     [branchId, specialtyId],
   );
-  const { data: doctorsPage } = useDoctors(doctorParams);
+  const { data: doctorsPage, isLoading: doctorsLoading } = useDoctors(doctorParams);
 
   useEffect(() => {
     if (!doctorDetail) return;
     if (!branchId && doctorDetail.branchId) {
       setBranchId(doctorDetail.branchId);
     }
-    const preferredSpecialty = doctorDetail.specialtyId || doctorDetail.specialtyIds?.[0];
+    const preferredSpecialty = getPublicDoctorBookingSpecialty(doctorDetail)?.id;
     if (!specialtyId && preferredSpecialty) {
       setSpecialtyId(preferredSpecialty);
     }
   }, [doctorDetail, branchId, specialtyId]);
 
-  const doctors = useMemo(() => doctorsPage?.items ?? [], [doctorsPage?.items]);
+  const doctors = useMemo(
+    () => (doctorsPage?.items ?? []).filter((doctor) => isPublicDoctorBookableForSpecialty(doctor, specialtyId)),
+    [doctorsPage?.items, specialtyId],
+  );
+  const selectedDoctor =
+    doctors.find((item) => item.id === doctorId) ??
+    (doctorDetail && isPublicDoctorBookableForSpecialty(doctorDetail, specialtyId) ? doctorDetail : undefined);
+  const selectedDoctorCanBook = Boolean(selectedDoctor && specialtyId && isPublicDoctorBookableForSpecialty(selectedDoctor, specialtyId));
 
   useEffect(() => {
     if (!branchId || branchSpecialtiesLoading || branchSpecialtiesFetching) return;
@@ -65,12 +77,17 @@ export default function AvailabilityPage() {
 
   useEffect(() => {
     if (!doctorId) return;
+    if (doctorsLoading || doctorDetailLoading) return;
+    if (doctorDetail?.id === doctorId && !isPublicDoctorBookableForSpecialty(doctorDetail, specialtyId)) {
+      setDoctorId('');
+      return;
+    }
     if (doctors.some((item) => item.id === doctorId)) return;
     setDoctorId('');
-  }, [doctorId, doctors]);
+  }, [doctorDetail, doctorDetail?.id, doctorDetailLoading, doctorId, doctors, doctorsLoading, specialtyId]);
 
   const availabilityParams = useMemo(() => {
-    if (!branchId || !specialtyId || !doctorId || !visitDate || !session) {
+    if (!branchId || !specialtyId || !doctorId || !visitDate || !session || !selectedDoctorCanBook) {
       return undefined;
     }
 
@@ -82,7 +99,7 @@ export default function AvailabilityPage() {
       session,
       onlyAvailable: 'true',
     };
-  }, [branchId, specialtyId, doctorId, visitDate, session]);
+  }, [branchId, specialtyId, doctorId, visitDate, session, selectedDoctorCanBook]);
 
   const { data: slots = [], isLoading, error } = useAvailability(availabilityParams);
 
@@ -159,7 +176,13 @@ export default function AvailabilityPage() {
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-soft text-primary">
               <Calendar className="h-7 w-7" />
             </div>
-            <p className="text-sm font-medium text-muted-foreground">{isEn ? 'Select filters to view availability.' : 'Chọn các bộ lọc để xem lịch trống.'}</p>
+            <p className="text-sm font-medium text-muted-foreground">
+              {doctorId && !selectedDoctorCanBook
+                ? `${getDoctorUnavailableBookingMessage(isEn)} ${isEn ? 'Please choose another doctor.' : 'Vui lòng chọn bác sĩ khác.'}`
+                : isEn
+                  ? 'Select filters to view availability.'
+                  : 'Chọn các bộ lọc để xem lịch trống.'}
+            </p>
           </div>
         ) : error ? (
           <div className="public-page-card border-dashed border-destructive/30 bg-destructive/5 px-6 py-14 text-center">

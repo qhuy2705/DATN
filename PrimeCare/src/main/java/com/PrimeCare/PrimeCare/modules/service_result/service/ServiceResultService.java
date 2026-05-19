@@ -62,6 +62,8 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ServiceResultService {
 
+    private static final String VERIFIED_RESULT_EDIT_MESSAGE = "Verified service results cannot be edited.";
+
     private static final EnumSet<ServiceOrderItemStatus> DEFAULT_QUEUE_STATUSES = EnumSet.of(
             ServiceOrderItemStatus.WAITING_EXECUTION,
             ServiceOrderItemStatus.IN_PROGRESS,
@@ -190,7 +192,7 @@ public class ServiceResultService {
 
     @Transactional
     public ServiceResultResponse submit(Long itemId, Long userId, SubmitServiceResultRequest req) {
-        ServiceOrderItem item = itemRepository.findById(itemId)
+        ServiceOrderItem item = itemRepository.findWithLockById(itemId)
                 .orElseThrow(() -> new ApiException(ErrorCode.SERVICE_ORDER_ITEM_NOT_FOUND));
 
         User user = userRepository.findById(userId)
@@ -206,12 +208,12 @@ public class ServiceResultService {
         ServiceResult result = resultRepository.findByServiceOrderItem_Id(itemId)
                 .orElse(ServiceResult.builder().serviceOrderItem(item).build());
 
+        if (result.getStatus() == ServiceResultStatus.VERIFIED) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, VERIFIED_RESULT_EDIT_MESSAGE);
+        }
+
         Map<String, Object> before = result.getId() != null ? snapshotResult(result) : null;
         ServiceResultStatus previousStatus = result.getStatus();
-
-        if (result.getStatus() == ServiceResultStatus.VERIFIED) {
-            throw new ApiException(ErrorCode.INVALID_REQUEST, "Kết quả đã được xác nhận, không thể sửa trực tiếp");
-        }
 
         LocalDateTime now = LocalDateTime.now();
         item.setStatus(ServiceOrderItemStatus.DONE);
@@ -278,13 +280,13 @@ public class ServiceResultService {
         );
         requestPdfGeneration(saved);
         serviceResultStatusHistoryService.record(saved, previousStatus, saved.getStatus(), user, before == null ? "Initial result submission" : "Result updated by technician");
-        auditLogService.log(user, before == null ? "CREATE" : "UPDATE", "SERVICE_RESULT", saved.getId(), before, snapshotResult(saved));
+        auditLogService.log(user, before == null ? "CREATE_SERVICE_RESULT" : "UPDATE_SERVICE_RESULT", "SERVICE_RESULT", saved.getId(), before, snapshotResult(saved));
         return toResponse(saved);
     }
 
     @Transactional
     public ServiceResultResponse verify(Long itemId, Long userId) {
-        ServiceOrderItem item = itemRepository.findById(itemId)
+        ServiceOrderItem item = itemRepository.findWithLockById(itemId)
                 .orElseThrow(() -> new ApiException(ErrorCode.SERVICE_ORDER_ITEM_NOT_FOUND));
 
         User user = userRepository.findById(userId)
@@ -318,7 +320,7 @@ public class ServiceResultService {
         publishRealtimeForResultChange(item, encounter, readyForConclusion, "SERVICE_RESULT_VERIFIED", encounter.getStatus().name());
         requestPdfGeneration(saved);
         serviceResultStatusHistoryService.record(saved, previousStatus, saved.getStatus(), user, "Result verified");
-        auditLogService.log(user, "VERIFY", "SERVICE_RESULT", saved.getId(), before, snapshotResult(saved));
+        auditLogService.log(user, "VERIFY_SERVICE_RESULT", "SERVICE_RESULT", saved.getId(), before, snapshotResult(saved));
         return toResponse(saved);
     }
 

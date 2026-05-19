@@ -1,0 +1,69 @@
+{
+  "version": "2026.05.01",
+  "items": [
+    {
+      "code": "CARDIOVASCULAR_RISK",
+      "label": "Bệnh tim mạch",
+      "synonyms": ["bệnh tim", "tim mạch", "suy tim", "mạch vành", "tăng huyết áp"],
+      "riskGroup": "HIGH_RISK_CONDITION",
+      "weight": 25,
+      "autoUrgent": false
+    },
+    {
+      "code": "DIABETES_RISK",
+      "label": "Đái tháo đường",
+      "synonyms": ["tiểu đường", "đái tháo đường", "đường huyết cao"],
+      "riskGroup": "HIGH_RISK_CONDITION",
+      "weight": 25,
+      "autoUrgent": false
+    },
+    {
+      "code": "RESPIRATORY_RISK",
+      "label": "Bệnh hô hấp mạn",
+      "synonyms": ["hen phế quản", "hen suyễn", "copd", "bệnh phổi mạn", "bệnh hô hấp mạn"],
+      "riskGroup": "HIGH_RISK_CONDITION",
+      "weight": 25,
+      "autoUrgent": false
+    },
+    {
+      "code": "DIALYSIS",
+      "label": "Suy thận / đang chạy thận",
+      "synonyms": ["suy thận mạn", "chạy thận", "lọc máu", "thận nhân tạo", "bệnh thận giai đoạn cuối"],
+      "riskGroup": "COMPLEX_CHRONIC_DISEASE",
+      "weight": 25,
+      "autoUrgent": false
+    },
+    {
+      "code": "IMMUNOCOMPROMISED",
+      "label": "Suy giảm miễn dịch",
+      "synonyms": ["suy giảm miễn dịch", "đang hóa trị", "ghép tạng", "dùng thuốc ức chế miễn dịch", "corticoid kéo dài"],
+      "riskGroup": "HIGH_RISK_CONDITION",
+      "weight": 25,
+      "autoUrgent": false
+    },
+    {
+      "code": "RECENT_SURGERY",
+      "label": "Vừa phẫu thuật",
+      "synonyms": ["vừa phẫu thuật", "mới mổ", "sau mổ", "sau phẫu thuật"],
+      "riskGroup": "RECENT_PROCEDURE",
+      "weight": 20,
+      "autoUrgent": false
+    },
+    {
+      "code": "TRANSPLANT_HISTORY",
+      "label": "Tiền sử ghép tạng",
+      "synonyms": ["ghép tạng", "ghép thận", "ghép gan", "sau ghép"],
+      "riskGroup": "HIGH_RISK_CONDITION",
+      "weight": 25,
+      "autoUrgent": false
+    },
+    {
+      "code": "COMPLEX_CHRONIC_DISEASE",
+      "label": "Bệnh mạn tính phức tạp",
+      "synonyms": ["bệnh tự miễn", "lupus", "xơ gan", "suy gan", "bệnh mạn tính nặng"],
+      "riskGroup": "COMPLEX_CHRONIC_DISEASE",
+      "weight": 20,
+      "autoUrgent": false
+    }
+  ]
+}

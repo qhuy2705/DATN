@@ -49,7 +49,8 @@ import {
   useUpdateStaffStatus,
 } from '@/hooks/use-admin-data';
 import { useBranches } from '@/hooks/use-public-data';
-import type { Staff } from '@/types/api';
+import { getAccountBadgeClass, getToggleStatusActionClass, statusToneClasses } from '@/lib/status-style-classes';
+import type { AppRole, Staff } from '@/types/api';
 import type { LucideIcon } from 'lucide-react';
 
 type StaffForm = {
@@ -57,15 +58,43 @@ type StaffForm = {
   branchId: string;
 };
 
+type StaffOperationalRole = Extract<
+  AppRole,
+  'STAFF' | 'CASHIER' | 'SERVICE_TECHNICIAN' | 'PHARMACIST'
+>;
+
+type StaffAccountForm = {
+  email: string;
+  phone: string;
+  role: StaffOperationalRole;
+};
+
 const defaultForm: StaffForm = {
   fullName: '',
   branchId: '',
 };
 
-const accountBadgeClass = (hasAccount?: boolean) =>
-  hasAccount
-    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-    : 'border-slate-200 bg-slate-100 text-slate-700';
+const STAFF_ACCOUNT_ROLE_OPTIONS: Array<{ value: StaffOperationalRole; label: string }> = [
+  { value: 'STAFF', label: 'Tiếp đón / vận hành chung' },
+  { value: 'CASHIER', label: 'Thu ngân' },
+  { value: 'SERVICE_TECHNICIAN', label: 'Kỹ thuật viên cận lâm sàng' },
+  { value: 'PHARMACIST', label: 'Dược sĩ' },
+];
+
+const STAFF_ACCOUNT_ROLE_VALUES = new Set<string>(
+  STAFF_ACCOUNT_ROLE_OPTIONS.map((option) => option.value),
+);
+
+function normalizeStaffAccountRole(value?: string | null): StaffOperationalRole {
+  return value && STAFF_ACCOUNT_ROLE_VALUES.has(value) ? (value as StaffOperationalRole) : 'STAFF';
+}
+
+function getStaffAccountRoleLabel(value?: string | null) {
+  return (
+    STAFF_ACCOUNT_ROLE_OPTIONS.find((option) => option.value === value)?.label ??
+    'Chưa xác định vai trò nghiệp vụ'
+  );
+}
 
 const getInitials = (name?: string) => {
   if (!name) return 'NS';
@@ -78,6 +107,25 @@ const getInitials = (name?: string) => {
       .join('') || 'NS'
   );
 };
+
+function formatSummaryValue(value: number | undefined, isLoading: boolean, isError: boolean) {
+  if (isLoading) return '...';
+  if (isError) return '-';
+  return typeof value === 'number' ? value.toLocaleString('vi-VN') : '-';
+}
+
+function getSummaryHint(
+  value: number | undefined,
+  isLoading: boolean,
+  isError: boolean,
+  hasBackendSummary: boolean,
+) {
+  if (isLoading) return 'Đang tải tổng hợp từ backend';
+  if (isError) return 'Không tải được tổng hợp từ backend';
+  if (!hasBackendSummary) return 'Chưa có dữ liệu tổng hợp từ backend';
+  if (typeof value !== 'number') return 'Backend chưa trả số liệu này';
+  return 'Theo bộ lọc hiện tại';
+}
 
 function SummaryCard({
   label,
@@ -93,7 +141,7 @@ function SummaryCard({
   toneClass: string;
 }) {
   return (
-    <Card className="overflow-hidden rounded-2xl border border-border/60 bg-white shadow-sm">
+    <Card className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm">
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-2">
@@ -125,7 +173,7 @@ export default function StaffsPage() {
   const [resetTarget, setResetTarget] = useState<Staff | null>(null);
   const [resetResult, setResetResult] = useState<{ mode: 'ACCOUNT_SETUP' | 'PASSWORD_RESET'; staffName: string; deliveryChannel?: string; deliveryTarget?: string; setupUrl?: string; expiresAt?: string } | null>(null);
   const [form, setForm] = useState<StaffForm>(defaultForm);
-  const [accountForm, setAccountForm] = useState({
+  const [accountForm, setAccountForm] = useState<StaffAccountForm>({
     email: '',
     phone: '',
     role: 'STAFF',
@@ -145,7 +193,13 @@ export default function StaffsPage() {
     size: '20',
     ...filterParams,
   });
-  const { data: staffSummary } = useAdminStaffsSummary(filterParams);
+  const {
+    data: staffSummary,
+    isLoading: staffSummaryLoading,
+    isError: staffSummaryLoadError,
+    isRefetchError: staffSummaryRefetchError,
+    isPlaceholderData: staffSummaryPlaceholder,
+  } = useAdminStaffsSummary(filterParams);
 
   const { data: branches = [] } = useBranches();
   const saveStaff = useSaveStaff();
@@ -164,17 +218,13 @@ export default function StaffsPage() {
     [data?.items, branchMap],
   );
 
-  const loadedPageSummary = useMemo(() => {
-    const activeStaffs = rows.filter((staff) => staff.status === 'ACTIVE').length;
-    const noAccountStaffs = rows.filter((staff) => !staff.hasAccount).length;
-
-    return {
-      total: data?.meta.totalItems ?? rows.length,
-      activeStaffs,
-      noAccountStaffs,
-    };
-  }, [data?.meta.totalItems, rows]);
-  const summary = staffSummary ?? loadedPageSummary;
+  const staffSummaryPending = staffSummaryLoading || staffSummaryPlaceholder;
+  const staffSummaryError = staffSummaryLoadError || staffSummaryRefetchError;
+  const hasStaffSummary = Boolean(staffSummary) && !staffSummaryPending && !staffSummaryError;
+  const staffSummaryHint = (value: number | undefined) =>
+    getSummaryHint(value, staffSummaryPending, staffSummaryError, hasStaffSummary);
+  const inactiveAccountStaffs =
+    staffSummary?.inactiveAccountStaffs ?? staffSummary?.blockedAccountStaffs;
 
   const openCreate = () => {
     setEditing(null);
@@ -204,7 +254,7 @@ export default function StaffsPage() {
     setAccountForm({
       email: row.accountEmail || row.email || '',
       phone: row.accountPhone || row.phone || '',
-      role: row.accountRole || row.role || 'STAFF',
+      role: normalizeStaffAccountRole(row.accountRole || row.role),
     });
     setAccountOpen(true);
   };
@@ -276,6 +326,12 @@ export default function StaffsPage() {
                 <Building2 className="h-3.5 w-3.5" />
                 {row.branchName || 'Chưa gán chi nhánh'}
               </Badge>
+              {row.hasAccount ? (
+                <Badge variant="outline" className="gap-1 rounded-full border-border/70 px-2.5 py-1 text-xs">
+                  <UserRound className="h-3.5 w-3.5" />
+                  {getStaffAccountRoleLabel(row.accountRole || row.role)}
+                </Badge>
+              ) : null}
             </div>
           </div>
         </div>
@@ -290,7 +346,7 @@ export default function StaffsPage() {
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={row.status || 'ACTIVE'} />
             <span
-              className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${accountBadgeClass(
+              className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${getAccountBadgeClass(
                 row.hasAccount,
               )}`}
             >
@@ -308,6 +364,15 @@ export default function StaffsPage() {
                     ? 'Đang khóa'
                     : 'Đang hoạt động'
                   : 'Chưa tạo'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              <span className="font-medium text-foreground">Vai trò:</span>
+              <span>
+                {row.hasAccount
+                  ? getStaffAccountRoleLabel(row.accountRole || row.role)
+                  : 'Chưa cấp tài khoản'}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -352,7 +417,7 @@ export default function StaffsPage() {
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => setStatusTarget(row)}
-                className={row.status === 'ACTIVE' ? 'text-amber-700' : 'text-emerald-700'}
+                className={getToggleStatusActionClass(row.status === 'ACTIVE')}
               >
                 {row.status === 'ACTIVE' ? (
                   <PauseCircle className="mr-2 h-4 w-4" />
@@ -384,24 +449,38 @@ export default function StaffsPage() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
           label="Tổng nhân sự"
-          value={summary.total.toString()}
-          hint="Theo bộ lọc hiện tại"
+          value={formatSummaryValue(staffSummary?.total, staffSummaryPending, staffSummaryError)}
+          hint={staffSummaryHint(staffSummary?.total)}
           icon={Users}
-          toneClass="border-slate-200 bg-slate-50 text-slate-600"
+          toneClass={statusToneClasses.neutral}
         />
         <SummaryCard
           label="Đang hoạt động"
-          value={summary.activeStaffs.toString()}
-          hint="Theo bộ lọc hiện tại"
+          value={formatSummaryValue(staffSummary?.activeStaffs, staffSummaryPending, staffSummaryError)}
+          hint={staffSummaryHint(staffSummary?.activeStaffs)}
           icon={UserRound}
-          toneClass="border-emerald-200 bg-emerald-50 text-emerald-700"
+          toneClass={statusToneClasses.success}
         />
         <SummaryCard
-          label="Chưa có tài khoản"
-          value={summary.noAccountStaffs.toString()}
-          hint="Theo bộ lọc hiện tại"
+          label="Ngừng hoạt động"
+          value={formatSummaryValue(staffSummary?.inactiveStaffs, staffSummaryPending, staffSummaryError)}
+          hint={staffSummaryHint(staffSummary?.inactiveStaffs)}
+          icon={PauseCircle}
+          toneClass={statusToneClasses.neutral}
+        />
+        <SummaryCard
+          label="Chưa cấp tài khoản"
+          value={formatSummaryValue(staffSummary?.noAccountStaffs, staffSummaryPending, staffSummaryError)}
+          hint={staffSummaryHint(staffSummary?.noAccountStaffs)}
           icon={KeyRound}
-          toneClass="border-amber-200 bg-amber-50 text-amber-700"
+          toneClass={statusToneClasses.warning}
+        />
+        <SummaryCard
+          label="Tài khoản không hoạt động"
+          value={formatSummaryValue(inactiveAccountStaffs, staffSummaryPending, staffSummaryError)}
+          hint={staffSummaryHint(inactiveAccountStaffs)}
+          icon={KeyRound}
+          toneClass={statusToneClasses.destructive}
         />
       </div>
 
@@ -492,9 +571,9 @@ export default function StaffsPage() {
       <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Tạo tài khoản nhân sự</DialogTitle>
+            <DialogTitle>Cấp tài khoản nghiệp vụ</DialogTitle>
             <DialogDescription>
-              PrimeCare sẽ gửi liên kết thiết lập mật khẩu qua email hoặc SMS. Nếu hệ thống không giao tự động được, sysadmin có thể copy link để chuyển thủ công qua kênh nội bộ an toàn.
+              Chọn đúng vai trò nghiệp vụ để nhân sự nhìn thấy đúng menu và luồng làm việc. PrimeCare sẽ gửi liên kết thiết lập mật khẩu qua email hoặc SMS.
             </DialogDescription>
           </DialogHeader>
 
@@ -520,19 +599,23 @@ export default function StaffsPage() {
               <label className="mb-1.5 block text-sm font-medium">Vai trò tài khoản</label>
               <Select
                 value={accountForm.role}
-                onValueChange={(value) => setAccountForm({ ...accountForm, role: value })}
+                onValueChange={(value) =>
+                  setAccountForm({ ...accountForm, role: normalizeStaffAccountRole(value) })
+                }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Chọn vai trò" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="STAFF">Tiếp đón / vận hành chung</SelectItem>
-                  <SelectItem value="CASHIER">Thu ngân</SelectItem>
-                  <SelectItem value="SERVICE_TECHNICIAN">Kỹ thuật viên cận lâm sàng</SelectItem>
+                  {STAFF_ACCOUNT_ROLE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <p className="mt-1 text-xs text-muted-foreground">
-                Chọn đúng vai trò ngay từ lúc cấp tài khoản để menu và websocket vào đúng luồng nghiệp vụ.
+                Chỉ cấp các vai trò nghiệp vụ nội bộ: tiếp đón, thu ngân, kỹ thuật viên cận lâm sàng hoặc dược sĩ.
               </p>
             </div>
             <div className="rounded-xl border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
@@ -545,7 +628,7 @@ export default function StaffsPage() {
               Hủy
             </Button>
             <Button onClick={() => void submitProvision()} disabled={provisionAccount.isPending}>
-              Tạo tài khoản
+              Cấp tài khoản
             </Button>
           </DialogFooter>
         </DialogContent>

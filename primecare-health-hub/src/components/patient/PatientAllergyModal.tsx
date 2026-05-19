@@ -139,8 +139,8 @@ export function PatientAllergyModal({
                         </span>
                         <span className={`text-xs px-2 rounded ${
                           a.severity === 'SEVERE' || a.severity === 'LIFE_THREATENING'
-                            ? 'bg-red-100 text-red-700'
-                            : 'bg-amber-100 text-amber-700'
+                            ? 'bg-destructive/10 text-destructive'
+                            : 'bg-warning/10 text-warning'
                         }`}>
                           {severityMap[a.severity]}
                         </span>

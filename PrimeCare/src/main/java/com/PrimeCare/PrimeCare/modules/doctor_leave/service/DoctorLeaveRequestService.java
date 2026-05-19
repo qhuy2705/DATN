@@ -3,6 +3,8 @@ package com.PrimeCare.PrimeCare.modules.doctor_leave.service;
 import com.PrimeCare.PrimeCare.config.PaginationConfig;
 import com.PrimeCare.PrimeCare.modules.appointment.entity.Appointment;
 import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentRepository;
+import com.PrimeCare.PrimeCare.modules.appointment.service.DoctorCancellationRecoveryService;
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.auth.entity.User;
 import com.PrimeCare.PrimeCare.modules.auth.repository.UserRepository;
 import com.PrimeCare.PrimeCare.modules.doctor_leave.dto.request.CreateDoctorLeaveRequest;
@@ -25,7 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -34,6 +38,8 @@ public class DoctorLeaveRequestService {
     private final DoctorLeaveRequestRepository doctorLeaveRequestRepository;
     private final UserRepository userRepository;
     private final AppointmentRepository appointmentRepository;
+    private final DoctorCancellationRecoveryService recoveryService;
+    private final AuditLogService auditLogService;
 
     @Transactional
     public DoctorLeaveRequestResponse create(Long currentUserId, CreateDoctorLeaveRequest request) {
@@ -66,7 +72,9 @@ public class DoctorLeaveRequestService {
                                                       .status(DoctorLeaveRequestStatus.PENDING)
                                                       .build();
 
-        return toResponse(doctorLeaveRequestRepository.save(entity));
+        DoctorLeaveRequest saved = doctorLeaveRequestRepository.save(entity);
+        auditLogService.log(user, "CREATE_DOCTOR_LEAVE_REQUEST", "DOCTOR_LEAVE_REQUEST", saved.getId(), null, snapshotLeaveRequest(saved));
+        return toResponse(saved);
     }
 
     public Page<DoctorLeaveRequestResponse> getMyRequests(
@@ -101,8 +109,11 @@ public class DoctorLeaveRequestService {
             throw new ApiException(ErrorCode.INVALID_REQUEST, "Chỉ có thể hủy đơn nghỉ đang chờ duyệt");
         }
 
+        Map<String, Object> before = snapshotLeaveRequest(entity);
         entity.setStatus(DoctorLeaveRequestStatus.CANCELLED);
-        return toResponse(doctorLeaveRequestRepository.save(entity));
+        DoctorLeaveRequest saved = doctorLeaveRequestRepository.save(entity);
+        auditLogService.log(user, "CANCEL_DOCTOR_LEAVE_REQUEST", "DOCTOR_LEAVE_REQUEST", saved.getId(), before, snapshotLeaveRequest(saved));
+        return toResponse(saved);
     }
 
     public Page<DoctorLeaveRequestResponse> getAll(
@@ -127,16 +138,25 @@ public class DoctorLeaveRequestService {
             throw new ApiException(ErrorCode.INVALID_REQUEST);
         }
 
-        if (hasAppointmentConflict(entity)) {
+        boolean hasConflict = hasAppointmentConflict(entity);
+        boolean recoveryEnabled = request != null && Boolean.TRUE.equals(request.getResolveConflictsWithRecovery());
+        if (hasConflict && !recoveryEnabled) {
             throw new ApiException(ErrorCode.DOCTOR_LEAVE_HAS_APPOINTMENT_CONFLICT);
         }
 
+        Map<String, Object> before = snapshotLeaveRequest(entity);
         entity.setStatus(DoctorLeaveRequestStatus.APPROVED);
         entity.setReviewedBy(user);
         entity.setReviewedAt(LocalDateTime.now());
         entity.setReviewNote(request.getReviewNote());
 
-        return toResponse(doctorLeaveRequestRepository.save(entity));
+        DoctorLeaveRequest saved = doctorLeaveRequestRepository.save(entity);
+        if (hasConflict) {
+            recoveryService.recoverForLeaveApproval(saved, user);
+        }
+
+        auditLogService.log(user, "APPROVE_DOCTOR_LEAVE_REQUEST", "DOCTOR_LEAVE_REQUEST", saved.getId(), before, snapshotLeaveRequest(saved));
+        return toResponse(saved);
     }
 
     @Transactional
@@ -149,12 +169,15 @@ public class DoctorLeaveRequestService {
             throw new ApiException(ErrorCode.INVALID_REQUEST);
         }
 
+        Map<String, Object> before = snapshotLeaveRequest(entity);
         entity.setStatus(DoctorLeaveRequestStatus.REJECTED);
         entity.setReviewedBy(user);
         entity.setReviewedAt(LocalDateTime.now());
         entity.setReviewNote(request.getReviewNote());
 
-        return toResponse(doctorLeaveRequestRepository.save(entity));
+        DoctorLeaveRequest saved = doctorLeaveRequestRepository.save(entity);
+        auditLogService.log(user, "REJECT_DOCTOR_LEAVE_REQUEST", "DOCTOR_LEAVE_REQUEST", saved.getId(), before, snapshotLeaveRequest(saved));
+        return toResponse(saved);
     }
 
     public boolean hasApprovedLeaveForSession(Long doctorId, LocalDate workDate, BranchSessionType session) {
@@ -305,7 +328,7 @@ public class DoctorLeaveRequestService {
                         entity.getDoctor().getId(),
                         entity.getStartDate(),
                         entity.getEndDate(),
-                        List.of(AppointmentStatus.REQUESTED, AppointmentStatus.CONFIRMED)
+                        List.of(AppointmentStatus.REQUESTED, AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN)
                 );
 
         for (Appointment appointment : appointments) {
@@ -380,5 +403,21 @@ public class DoctorLeaveRequestService {
             return user.getDoctorProfile().getFullName();
         }
         return user.getEmail();
+    }
+
+    private Map<String, Object> snapshotLeaveRequest(DoctorLeaveRequest entity) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("leaveRequestId", entity.getId());
+        data.put("doctorId", entity.getDoctor() != null ? entity.getDoctor().getId() : null);
+        data.put("startDate", entity.getStartDate());
+        data.put("endDate", entity.getEndDate());
+        data.put("startSession", entity.getStartSession() != null ? entity.getStartSession().name() : null);
+        data.put("endSession", entity.getEndSession() != null ? entity.getEndSession().name() : null);
+        data.put("status", entity.getStatus() != null ? entity.getStatus().name() : null);
+        data.put("reason", entity.getReason());
+        data.put("approverId", entity.getReviewedBy() != null ? entity.getReviewedBy().getId() : null);
+        data.put("reviewedAt", entity.getReviewedAt());
+        data.put("reviewNote", entity.getReviewNote());
+        return data;
     }
 }

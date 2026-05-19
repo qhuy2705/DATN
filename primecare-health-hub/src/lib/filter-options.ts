@@ -17,6 +17,7 @@ const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   PENDING_CONFIRMATION: 'Chờ xác nhận',
   PAYMENT_REVIEW: 'Cần kiểm tra',
   PAID: 'Đã thanh toán',
+  PARTIALLY_REFUNDED: 'Hoàn một phần',
   REFUNDED: 'Đã hoàn tiền',
   VOID: 'Đã hủy',
 };
@@ -48,9 +49,11 @@ export function buildArrivalStatusOptions(t: TFunction): SelectOption[] {
 }
 
 export function buildSourceTypeOptions(t: TFunction): SelectOption[] {
+  void t;
   return [
-    { value: 'ONLINE', label: t('filters.sourceType.online') },
-    { value: 'WALK_IN', label: t('filters.sourceType.walkIn') },
+    { value: 'PUBLIC_BOOKING', label: 'Đặt online' },
+    { value: 'STAFF_BOOKING', label: 'Nhân viên đặt' },
+    { value: 'WALK_IN', label: 'Khám trực tiếp' },
   ];
 }
 
@@ -75,7 +78,9 @@ export function getArrivalStatusLabel(value: string | undefined, t: TFunction): 
 }
 
 export function getSourceTypeLabel(value: string | undefined, t: TFunction): string {
-  if (value === 'ONLINE') return t('filters.sourceType.online');
-  if (value === 'WALK_IN') return t('filters.sourceType.walkIn');
+  void t;
+  if (value === 'PUBLIC_BOOKING') return 'Đặt online';
+  if (value === 'STAFF_BOOKING') return 'Nhân viên đặt';
+  if (value === 'WALK_IN') return 'Khám trực tiếp';
   return value || '-';
 }

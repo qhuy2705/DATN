@@ -8,5 +8,6 @@ import lombok.Data;
 public class DashboardBranchRevenueResponse {
     private Long branchId;
     private String branchName;
+    private long netPaidRevenue;
     private long paidRevenue;
 }

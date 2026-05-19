@@ -25,29 +25,36 @@ public class DashboardController {
     @GetMapping("/overview")
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN','OPERATIONS_ADMIN')")
     public ApiResponse<DashboardOverviewResponse> overview(
-            @RequestParam(defaultValue = "today") String period,
-            @RequestParam(required = false) java.time.LocalDate fromDate,
-            @RequestParam(required = false) java.time.LocalDate toDate
+            @RequestParam(required = false) String period,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
+            @RequestParam(required = false) Integer days
     ) {
-        return ApiResponse.ok("OK", dashboardService.overview(period, fromDate, toDate));
+        return ApiResponse.ok("OK", dashboardService.overview(period, fromDate, toDate, days));
     }
 
     @GetMapping("/breakdown")
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN','OPERATIONS_ADMIN')")
     public ApiResponse<DashboardBreakdownResponse> breakdown(
-            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(required = false) String period,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
+            @RequestParam(required = false) Integer days,
             @RequestParam(defaultValue = "5") int topN
     ) {
-        return ApiResponse.ok("OK", dashboardService.breakdown(days, topN));
+        return ApiResponse.ok("OK", dashboardService.breakdown(period, fromDate, toDate, days, topN));
     }
 
     @GetMapping("/kpis")
     @PreAuthorize("hasAnyRole('SYSTEM_ADMIN','OPERATIONS_ADMIN')")
     public ApiResponse<DashboardKpiResponse> kpis(
-            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(required = false) String period,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
+            @RequestParam(required = false) Integer days,
             @RequestParam(defaultValue = "10") int topN
     ) {
-        return ApiResponse.ok("OK", dashboardService.kpis(days, topN));
+        return ApiResponse.ok("OK", dashboardService.kpis(period, fromDate, toDate, days, topN));
     }
 
     @GetMapping("/revenue-report")

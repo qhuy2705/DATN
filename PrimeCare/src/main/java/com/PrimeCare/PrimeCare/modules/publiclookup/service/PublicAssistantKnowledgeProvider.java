@@ -102,8 +102,8 @@ public class PublicAssistantKnowledgeProvider {
                 "WORKFLOW_BOOKING",
                 english ? "PrimeCare website booking flow" : "Flow đặt lịch trên website PrimeCare",
                 english
-                        ? "Booking on the website follows 4 steps: (1) choose branch, specialty and doctor; (2) choose visit date, AM or PM session, then choose an available slot in real time; (3) fill in patient information including full name, phone, optional email, date of birth, gender and optional note; (4) confirm the request and keep the appointment code for later lookup."
-                        : "Đặt lịch trên website gồm 4 bước: (1) chọn cơ sở, chuyên khoa và bác sĩ; (2) chọn ngày khám, buổi sáng hoặc chiều, rồi chọn khung giờ còn trống theo thời gian thực; (3) điền thông tin bệnh nhân gồm họ tên, số điện thoại, email nếu có, ngày sinh, giới tính và ghi chú nếu cần; (4) xác nhận gửi yêu cầu và lưu mã lịch hẹn để tra cứu lại.",
+                        ? "Booking on the website follows 4 steps: (1) choose branch, specialty and doctor; (2) choose visit date, AM or PM session, then choose an available slot in real time; (3) fill in patient information including full name, phone, email for OTP lookup/cancellation, date of birth, gender and optional note; (4) confirm the request and keep the appointment code for later lookup."
+                        : "Đặt lịch trên website gồm 4 bước: (1) chọn cơ sở, chuyên khoa và bác sĩ; (2) chọn ngày khám, buổi sáng hoặc chiều, rồi chọn khung giờ còn trống theo thời gian thực; (3) điền thông tin bệnh nhân gồm họ tên, số điện thoại, email để nhận OTP tra cứu/hủy lịch, ngày sinh, giới tính và ghi chú nếu cần; (4) xác nhận gửi yêu cầu và lưu mã lịch hẹn để tra cứu lại.",
                 AssistantIntent.BOOKING,
                 "/booking",
                 List.of("dat lich", "booking", "4 buoc", "appointment", "slot", "visit date", "session")

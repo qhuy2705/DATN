@@ -7,6 +7,7 @@ import com.PrimeCare.PrimeCare.modules.auth.repository.AccessTokenBlacklistRepos
 import com.PrimeCare.PrimeCare.modules.auth.repository.RefreshTokenRepository;
 import com.PrimeCare.PrimeCare.modules.auth.repository.UserRepository;
 import com.PrimeCare.PrimeCare.modules.auth.security.JwtService;
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.shared.enums.UserRole;
 import com.PrimeCare.PrimeCare.shared.enums.UserStatus;
 import com.PrimeCare.PrimeCare.shared.exception.ApiException;
@@ -42,6 +43,8 @@ class AuthServicePasswordTest {
     private JwtService jwtService;
     @Mock
     private PasswordEncoder passwordEncoder;
+    @Mock
+    private AuditLogService auditLogService;
 
     @InjectMocks
     private AuthService service;

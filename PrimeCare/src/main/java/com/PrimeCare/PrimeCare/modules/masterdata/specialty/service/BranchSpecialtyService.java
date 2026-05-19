@@ -1,5 +1,6 @@
 package com.PrimeCare.PrimeCare.modules.masterdata.specialty.service;
 
+import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.masterdata.branch.entity.Branch;
 import com.PrimeCare.PrimeCare.modules.masterdata.branch.repository.BranchRepository;
 import com.PrimeCare.PrimeCare.modules.masterdata.specialty.dto.request.CreateBranchSpecialtyRequest;
@@ -21,7 +22,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +33,7 @@ public class BranchSpecialtyService {
     private final BranchSpecialtyRepository branchSpecialtyRepository;
     private final BranchRepository branchRepository;
     private final SpecialtyRepository specialtyRepository;
+    private final AuditLogService auditLogService;
 
     @Transactional
     public BranchSpecialtyResponse create(CreateBranchSpecialtyRequest req) {
@@ -53,13 +57,16 @@ public class BranchSpecialtyService {
                                                 .note(StringUtil.trimToNull(req.getNote()))
                                                 .build();
 
-        return toResponse(branchSpecialtyRepository.save(entity));
+        BranchSpecialty saved = branchSpecialtyRepository.save(entity);
+        auditLogService.log(null, "ASSIGN_BRANCH_SPECIALTY", "BRANCH_SPECIALTY", saved.getId(), null, snapshotBranchSpecialty(saved));
+        return toResponse(saved);
     }
 
     @Transactional
     public BranchSpecialtyResponse update(Long id, UpdateBranchSpecialtyRequest req) {
         BranchSpecialty entity = branchSpecialtyRepository.findById(id)
                                                           .orElseThrow(() -> new ApiException(ErrorCode.INVALID_REQUEST, "Không tìm thấy cấu hình chuyên khoa của chi nhánh"));
+        Map<String, Object> before = snapshotBranchSpecialty(entity);
 
         entity.setStatus(req.getStatus());
         entity.setDisplayOrder(req.getDisplayOrder());
@@ -67,7 +74,12 @@ public class BranchSpecialtyService {
         entity.setSlotMinutesOverride(req.getSlotMinutesOverride());
         entity.setNote(StringUtil.trimToNull(req.getNote()));
 
-        return toResponse(branchSpecialtyRepository.save(entity));
+        BranchSpecialty saved = branchSpecialtyRepository.save(entity);
+        String action = saved.getStatus() == BranchSpecialtyStatus.INACTIVE
+                ? "UNASSIGN_BRANCH_SPECIALTY"
+                : "UPDATE_BRANCH_SPECIALTY";
+        auditLogService.log(null, action, "BRANCH_SPECIALTY", saved.getId(), before, snapshotBranchSpecialty(saved));
+        return toResponse(saved);
     }
 
     @Transactional(readOnly = true)
@@ -193,5 +205,18 @@ public class BranchSpecialtyService {
                                       .slotMinutesOverride(entity.getSlotMinutesOverride())
                                       .note(entity.getNote())
                                       .build();
+    }
+
+    private Map<String, Object> snapshotBranchSpecialty(BranchSpecialty entity) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("id", entity.getId());
+        data.put("branchId", entity.getBranch() != null ? entity.getBranch().getId() : null);
+        data.put("specialtyId", entity.getSpecialty() != null ? entity.getSpecialty().getId() : null);
+        data.put("status", entity.getStatus() != null ? entity.getStatus().name() : null);
+        data.put("displayOrder", entity.getDisplayOrder());
+        data.put("consultationFee", entity.getConsultationFee());
+        data.put("slotMinutesOverride", entity.getSlotMinutesOverride());
+        data.put("note", entity.getNote());
+        return data;
     }
 }

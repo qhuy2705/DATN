@@ -36,6 +36,28 @@ export type SubmitServiceResultBody = {
   reportTitle?: string;
 };
 
+function getHttpStatus(error: unknown) {
+  return (error as { response?: { status?: number } })?.response?.status;
+}
+
+function getSubmitServiceResultErrorMessage(error: unknown) {
+  const message = getApiErrorMessage(error, 'Cập nhật kết quả cận lâm sàng thất bại');
+  const status = getHttpStatus(error);
+  const normalized = message.toLowerCase();
+  const looksVerified =
+    normalized.includes('verified') ||
+    normalized.includes('finalized') ||
+    normalized.includes('read-only') ||
+    normalized.includes('xác nhận') ||
+    normalized.includes('xác thực');
+
+  if (status === 409 || (status === 403 && looksVerified)) {
+    return 'Kết quả đã xác nhận, chỉ có thể xem.';
+  }
+
+  return message;
+}
+
 export function useServiceDeskQueue(params?: Record<string, string>) {
   return useQuery({
     queryKey: serviceDeskQueryKeys.queue(params),
@@ -93,7 +115,10 @@ export function useSubmitServiceResult() {
       toast.success('Đã cập nhật kết quả cận lâm sàng');
     },
     onError: (error) => {
-      toast.error(getApiErrorMessage(error, 'Cập nhật kết quả cận lâm sàng thất bại'));
+      if (getHttpStatus(error) === 409 || getHttpStatus(error) === 403) {
+        qc.invalidateQueries({ queryKey: ['service-desk'] });
+      }
+      toast.error(getSubmitServiceResultErrorMessage(error));
     },
   });
 }

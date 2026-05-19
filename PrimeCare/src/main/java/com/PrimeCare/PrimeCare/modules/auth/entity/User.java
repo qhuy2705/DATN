@@ -37,6 +37,9 @@ public class User extends BaseEntity {
         @Column(name="email", length=255)
         private String email;
 
+        @Column(name="email_verified_at")
+        private LocalDateTime emailVerifiedAt;
+
         @Column(name="phone", length=32)
         private String phone;
 

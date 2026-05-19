@@ -1,8 +1,12 @@
 package com.PrimeCare.PrimeCare.modules.prescription.entity;
 
 import com.PrimeCare.PrimeCare.modules.medication.entity.Medication;
+import com.PrimeCare.PrimeCare.modules.auth.entity.User;
+import com.PrimeCare.PrimeCare.shared.enums.PrescriptionItemStatus;
 import jakarta.persistence.*;
 import lombok.*;
+
+import java.time.LocalDateTime;
 
 @Getter
 @Setter
@@ -57,4 +61,25 @@ public class PrescriptionItem {
 
     @Column(name = "instruction", columnDefinition = "TEXT")
     private String instruction;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 24)
+    private PrescriptionItemStatus status;
+
+    @Column(name = "refund_reason", length = 500)
+    private String refundReason;
+
+    @Column(name = "refunded_at")
+    private LocalDateTime refundedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "refunded_by_user_id")
+    private User refundedByUser;
+
+    @PrePersist
+    void prePersist() {
+        if (status == null) {
+            status = PrescriptionItemStatus.ISSUED;
+        }
+    }
 }

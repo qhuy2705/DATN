@@ -1,6 +1,5 @@
 package com.PrimeCare.PrimeCare.modules.appointment.service;
 
-import com.PrimeCare.PrimeCare.modules.appointment.config.AppointmentNoShowProperties;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.request.CreateWalkInAppointmentRequest;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AppointmentAdminResponse;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.ReceptionQueueSummaryResponse;
@@ -25,6 +24,10 @@ import com.PrimeCare.PrimeCare.modules.notification.service.InternalNotification
 import com.PrimeCare.PrimeCare.modules.patient.entity.Patient;
 import com.PrimeCare.PrimeCare.modules.patient.service.PatientService;
 import com.PrimeCare.PrimeCare.modules.realtime.service.RealtimeEventPublisher;
+import com.PrimeCare.PrimeCare.modules.triage.TriageJsonSupport;
+import com.PrimeCare.PrimeCare.modules.triage.TriageMatchedRule;
+import com.PrimeCare.PrimeCare.modules.triage.TriageMatchedTerm;
+import com.PrimeCare.PrimeCare.modules.triage.TriagePriorityNormalizer;
 import com.PrimeCare.PrimeCare.shared.common.PageResponse;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentSourceType;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentStatus;
@@ -72,6 +75,7 @@ public class AppointmentReceptionService {
 
     private final AppointmentRepository appointmentRepository;
     private final AppointmentAvailabilityService availabilityService;
+    private final AppointmentSlotAvailabilityGuard slotAvailabilityGuard;
     private final AppointmentCodeGenerator appointmentCodeGenerator;
     private final ReceptionQueueAllocator receptionQueueAllocator;
     private final PatientService patientService;
@@ -88,7 +92,6 @@ public class AppointmentReceptionService {
     private final RealtimeEventPublisher realtimeEventPublisher;
     private final AppointmentStatusHistoryService appointmentStatusHistoryService;
     private final AuditLogService auditLogService;
-    private final AppointmentNoShowProperties noShowProperties;
     private final InternalNotificationService internalNotificationService;
 
     @Transactional
@@ -163,7 +166,7 @@ public class AppointmentReceptionService {
 
         int slotCapacity = availabilityService.resolveSlotCapacity(branchSession);
 
-        var blockingAppointments = appointmentRepository.findByDoctor_IdAndVisitDateAndSessionAndStatusInOrderByEtaStartAsc(
+        var blockingAppointments = appointmentRepository.findWithLockByDoctor_IdAndVisitDateAndSessionAndStatusIn(
                 doctor.getId(),
                 request.getVisitDate(),
                 request.getSession(),
@@ -182,6 +185,16 @@ public class AppointmentReceptionService {
                     "Khung giờ đã có lịch hẹn. Vui lòng chọn khung giờ khác."
             );
         }
+
+        slotAvailabilityGuard.assertSlotAvailable(
+                doctor.getId(),
+                request.getVisitDate(),
+                request.getSession(),
+                selectedSlot.getStartTime(),
+                selectedSlot.getEndTime(),
+                null,
+                null
+        );
 
         Patient patient = patientService.findOrCreateFromAppointmentData(
                 request.getPatientFullName(),
@@ -250,6 +263,9 @@ public class AppointmentReceptionService {
                                         .confirmedBy(staff)
                                         .confirmedAt(now)
                                         .build();
+        if (shouldArriveNow) {
+            AppointmentCheckInState.apply(entity, staff, now);
+        }
 
         Appointment saved = appointmentRepository.save(entity);
         appointmentQueueService.recalculateProjectedQueue(
@@ -315,6 +331,24 @@ public class AppointmentReceptionService {
         return trimmed != null ? trimmed.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ") : null;
     }
 
+    private String normalizeReceptionPriorityFilter(String value) {
+        String token = TriagePriorityNormalizer.normalizeToken(value);
+        if (token == null) {
+            return null;
+        }
+        if (TriagePriorityNormalizer.NONE.equals(token) || "UNCLASSIFIED".equals(token)) {
+            return TriagePriorityNormalizer.NONE;
+        }
+        String normalizedPriority = TriagePriorityNormalizer.normalizePriority(token);
+        if (normalizedPriority == null) {
+            throw new ApiException(
+                    ErrorCode.VALIDATION_ERROR,
+                    "Invalid triagePriority filter. Supported values: P1, P2, P3, NONE."
+            );
+        }
+        return normalizedPriority;
+    }
+
     @Transactional
     public AppointmentAdminResponse markArrived(Long appointmentId, Long staffUserId) {
         Appointment appointment = appointmentRepository.findById(appointmentId)
@@ -367,9 +401,12 @@ public class AppointmentReceptionService {
         User staff = userRepository.findById(staffUserId)
                                    .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHORIZED));
 
-        if (appointment.getStatus() != AppointmentStatus.CONFIRMED
-                && appointment.getStatus() != AppointmentStatus.REQUESTED) {
-            throw new ApiException(ErrorCode.APPOINTMENT_INVALID_STATUS, "Chỉ lịch chờ xử lý hoặc đã xác nhận mới được check-in");
+        if (appointment.getStatus() == AppointmentStatus.REQUESTED) {
+            throw new ApiException(ErrorCode.APPOINTMENT_INVALID_STATUS, "Lịch hẹn cần được xác nhận trước khi check-in.");
+        }
+
+        if (appointment.getStatus() != AppointmentStatus.CONFIRMED) {
+            throw new ApiException(ErrorCode.APPOINTMENT_INVALID_STATUS, "Chỉ lịch đã xác nhận mới được check-in.");
         }
 
         if (!LocalDate.now().equals(appointment.getVisitDate())) {
@@ -379,30 +416,18 @@ public class AppointmentReceptionService {
         Map<String, Object> before = snapshotAppointment(appointment);
         AppointmentStatus previousStatus = appointment.getStatus();
         LocalDateTime now = LocalDateTime.now();
+        boolean needsArrivalQueueNumber = appointment.getArrivalStatus() != ArrivalStatus.ARRIVED;
 
-        if (appointment.getArrivalStatus() != ArrivalStatus.ARRIVED) {
-            appointment.setArrivalStatus(ArrivalStatus.ARRIVED);
-            appointment.setArrivedAt(now);
-            appointment.setArrivedBy(staff);
-
-            if (appointment.getReceptionQueueNo() == null) {
-                appointment.setReceptionQueueNo(
-                        receptionQueueAllocator.allocateNext(
-                                appointment.getBranch().getId(),
-                                appointment.getVisitDate()
-                        )
-                );
-            }
+        if (needsArrivalQueueNumber && appointment.getReceptionQueueNo() == null) {
+            appointment.setReceptionQueueNo(
+                    receptionQueueAllocator.allocateNext(
+                            appointment.getBranch().getId(),
+                            appointment.getVisitDate()
+                    )
+            );
         }
 
-        if (previousStatus == AppointmentStatus.REQUESTED) {
-            appointment.setConfirmedBy(staff);
-            appointment.setConfirmedAt(now);
-        }
-
-        appointment.setStatus(AppointmentStatus.CHECKED_IN);
-        appointment.setCheckedInAt(now);
-        appointment.setCheckedInBy(staff);
+        AppointmentCheckInState.apply(appointment, staff, now);
 
         Appointment saved = appointmentRepository.save(appointment);
         appointmentQueueService.recalculateProjectedQueue(
@@ -428,11 +453,13 @@ public class AppointmentReceptionService {
             Long specialtyId,
             ArrivalStatus arrivalStatus,
             AppointmentSourceType sourceType,
+            String triagePriority,
             Boolean overdue,
             String q,
             Pageable pageable
     ) {
         String keyword = StringUtil.trimToNull(q);
+        String priorityFilter = normalizeReceptionPriorityFilter(triagePriority);
         LocalDateTime now = LocalDateTime.now();
         LocalDate overdueVisitDate = LocalDate.now();
         LocalTime overdueCutoffTime = overdueCutoffTime(now);
@@ -443,6 +470,7 @@ public class AppointmentReceptionService {
                 specialtyId,
                 arrivalStatus,
                 sourceType,
+                priorityFilter,
                 ACTIVE_QUEUE_STATUSES,
                 Boolean.TRUE.equals(overdue),
                 overdueVisitDate,
@@ -474,10 +502,12 @@ public class AppointmentReceptionService {
             Long specialtyId,
             ArrivalStatus arrivalStatus,
             AppointmentSourceType sourceType,
+            String triagePriority,
             Boolean overdue,
             String q
     ) {
         String keyword = StringUtil.trimToNull(q);
+        String priorityFilter = normalizeReceptionPriorityFilter(triagePriority);
         LocalDateTime now = LocalDateTime.now();
         LocalDate overdueVisitDate = LocalDate.now();
         LocalTime overdueCutoffTime = overdueCutoffTime(now);
@@ -489,6 +519,7 @@ public class AppointmentReceptionService {
                 specialtyId,
                 arrivalStatus,
                 sourceType,
+                priorityFilter,
                 ACTIVE_QUEUE_STATUSES,
                 Boolean.TRUE.equals(overdue),
                 overdueVisitDate,
@@ -505,6 +536,7 @@ public class AppointmentReceptionService {
                         specialtyId,
                         arrivalStatus,
                         sourceType,
+                        priorityFilter,
                         overdueVisitDate,
                         overdueCutoffTime,
                         keyword,
@@ -517,6 +549,7 @@ public class AppointmentReceptionService {
                 specialtyId,
                 arrivalStatus,
                 sourceType,
+                priorityFilter,
                 keyword,
                 keywordLower
         );
@@ -566,8 +599,32 @@ public class AppointmentReceptionService {
                                        .visitType(entity.getVisitType())
                                        .triagePriority(entity.getTriagePriority())
                                        .triageNote(entity.getTriageNote())
-                                       .receptionPriority(entity.getTriagePriority())
+                                       .preTriageLevel(entity.getPreTriageLevel())
+                                       .preTriagePriority(entity.getPreTriagePriority())
+                                       .preTriageFlags(TriageJsonSupport.readStringList(entity.getPreTriageFlagsJson()))
+                                       .preTriageReasons(TriageJsonSupport.readStringList(entity.getPreTriageReasonsJson()))
+                                       .preTriageSummary(entity.getPreTriageSummary())
+                                       .preTriageAssessedAt(entity.getPreTriageAssessedAt())
+                                       .symptomOnset(entity.getSymptomOnset())
+                                       .chronicConditions(TriageJsonSupport.readStringList(entity.getChronicConditionsJson()))
+                                       .chronicConditionOthers(TriageJsonSupport.readStringList(entity.getChronicConditionOthersJson()))
+                                       .functionalImpact(entity.getFunctionalImpact())
+                                       .redFlagSelections(TriageJsonSupport.readStringList(entity.getRedFlagSelectionsJson()))
+                                       .preTriageMatchedTerms(TriageJsonSupport.readObjectList(entity.getPreTriageMatchedTermsJson(), TriageMatchedTerm.class))
+                                       .preTriageMatchedRules(TriageJsonSupport.readObjectList(entity.getPreTriageMatchedRulesJson(), TriageMatchedRule.class))
+                                       .preTriageSource(entity.getPreTriageSource())
+                                       .preTriageConfidenceLevel(entity.getPreTriageConfidenceLevel())
+                                       .preTriageKnowledgeBaseVersion(entity.getPreTriageKnowledgeBaseVersion())
+                                       .preTriageRulesetVersion(entity.getPreTriageRulesetVersion())
+                                       .preTriageAiModelVersion(entity.getPreTriageAiModelVersion())
+                                       .triageReviewStatus(entity.getTriageReviewStatus())
+                                       .triageReviewedAt(entity.getTriageReviewedAt())
+                                       .triageReviewedByName(entity.getTriageReviewedBy() != null ? resolveUserDisplayName(entity.getTriageReviewedBy()) : null)
+                                       .triageOverrideReason(entity.getTriageOverrideReason())
+                                       .receptionPriority(effectivePriority(entity))
                                        .receptionNote(entity.getTriageNote())
+                                       .effectivePriority(effectivePriority(entity))
+                                       .effectivePrioritySource(effectivePrioritySource(entity))
                                        .insuranceNote(entity.getInsuranceNote())
                                        .emergencyContactName(entity.getEmergencyContactName())
                                        .emergencyContactPhone(entity.getEmergencyContactPhone())
@@ -589,9 +646,14 @@ public class AppointmentReceptionService {
                                        .confirmedByName(entity.getConfirmedBy() != null ? resolveUserDisplayName(entity.getConfirmedBy()) : null)
                                        .checkedInAt(entity.getCheckedInAt())
                                        .checkedInByName(entity.getCheckedInBy() != null ? resolveUserDisplayName(entity.getCheckedInBy()) : null)
+                                       .checkedInLate(Boolean.TRUE.equals(entity.getCheckedInLate()))
+                                       .lateMinutes(entity.getLateMinutes() != null ? entity.getLateMinutes() : 0)
                                        .noShowMarkedAt(entity.getNoShowMarkedAt())
                                        .noShowMarkedByName(entity.getNoShowMarkedBy() != null ? resolveUserDisplayName(entity.getNoShowMarkedBy()) : null)
                                        .noShowNote(entity.getNoShowNote())
+                                       .canMarkNoShow(noShowBlockedReason(entity) == null)
+                                       .noShowEligibleAt(noShowEligibleAt(entity))
+                                       .noShowBlockedReason(noShowBlockedReason(entity))
                                        .followUpPending(Boolean.TRUE.equals(entity.getFollowUpPending()))
                                        .rescheduledFromAppointmentId(entity.getRescheduledFromAppointment() != null ? entity.getRescheduledFromAppointment().getId() : null)
                                        .rescheduledToAppointmentId(resolveRescheduledToAppointmentId(entity.getId()))
@@ -707,12 +769,37 @@ public class AppointmentReceptionService {
                                     .orElse(null);
     }
 
+    private String effectivePriority(Appointment appointment) {
+        String staffPriority = StringUtil.trimToNull(appointment.getTriagePriority());
+        if (staffPriority != null) {
+            return staffPriority;
+        }
+        return StringUtil.trimToNull(appointment.getPreTriagePriority());
+    }
+
+    private String effectivePrioritySource(Appointment appointment) {
+        if (StringUtil.trimToNull(appointment.getTriagePriority()) != null) {
+            return "STAFF_CONFIRMED";
+        }
+        if (StringUtil.trimToNull(appointment.getPreTriagePriority()) != null) {
+            return "SYSTEM_PRE_TRIAGE";
+        }
+        return "NONE";
+    }
+
+    private LocalDateTime noShowEligibleAt(Appointment appointment) {
+        return AppointmentTimingPolicy.noShowEligibleAt(appointment);
+    }
+
+    private String noShowBlockedReason(Appointment appointment) {
+        return AppointmentTimingPolicy.noShowBlockedReason(appointment, LocalDateTime.now());
+    }
+
     private LocalTime overdueCutoffTime(LocalDateTime now) {
-        LocalDateTime cutoff = now.minusMinutes(noShowProperties.effectiveGraceMinutes());
-        if (!cutoff.toLocalDate().equals(LocalDate.now())) {
+        if (!now.toLocalDate().equals(LocalDate.now())) {
             return LocalTime.MIN;
         }
-        return cutoff.toLocalTime();
+        return now.toLocalTime();
     }
 
     private Map<String, Object> snapshotAppointment(Appointment appointment) {
@@ -732,6 +819,8 @@ public class AppointmentReceptionService {
         data.put("arrivedById", appointment.getArrivedBy() != null ? appointment.getArrivedBy().getId() : null);
         data.put("checkedInAt", appointment.getCheckedInAt());
         data.put("checkedInById", appointment.getCheckedInBy() != null ? appointment.getCheckedInBy().getId() : null);
+        data.put("checkedInLate", appointment.getCheckedInLate());
+        data.put("lateMinutes", appointment.getLateMinutes());
         data.put("noShowMarkedAt", appointment.getNoShowMarkedAt());
         data.put("noShowNote", appointment.getNoShowNote());
         data.put("followUpPending", appointment.getFollowUpPending());
@@ -740,6 +829,8 @@ public class AppointmentReceptionService {
         data.put("patientId", appointment.getPatient() != null ? appointment.getPatient().getId() : null);
         data.put("patientFullName", appointment.getPatientFullName());
         data.put("patientPhone", appointment.getPatientPhone());
+        data.put("triagePriority", appointment.getTriagePriority());
+        data.put("triageReviewStatus", appointment.getTriageReviewStatus());
         return data;
     }
 

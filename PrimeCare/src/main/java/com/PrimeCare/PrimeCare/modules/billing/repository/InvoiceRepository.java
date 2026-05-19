@@ -25,7 +25,18 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
     // Eager-load service order chain for detail views
     @Override
     @NonNull
-    @EntityGraph(attributePaths = {"serviceOrder", "serviceOrder.encounter", "serviceOrder.encounter.doctor", "serviceOrder.branch"})
+    @EntityGraph(attributePaths = {
+            "serviceOrder",
+            "serviceOrder.encounter",
+            "serviceOrder.encounter.doctor",
+            "serviceOrder.encounter.patient",
+            "serviceOrder.branch",
+            "prescription",
+            "prescription.encounter",
+            "prescription.encounter.doctor",
+            "prescription.encounter.patient",
+            "prescription.encounter.branch"
+    })
     Optional<Invoice> findById(@NonNull Long id);
 
     Optional<Invoice> findByCode(String code);
@@ -36,12 +47,25 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
 
     long countByServiceOrder_Encounter_Patient_Id(Long patientId);
 
-    @EntityGraph(attributePaths = {"serviceOrder", "serviceOrder.encounter", "serviceOrder.encounter.doctor", "serviceOrder.branch"})
+    @EntityGraph(attributePaths = {
+            "serviceOrder",
+            "serviceOrder.encounter",
+            "serviceOrder.encounter.doctor",
+            "serviceOrder.branch",
+            "prescription",
+            "prescription.encounter",
+            "prescription.encounter.doctor",
+            "prescription.encounter.branch"
+    })
     Page<Invoice> findByPaymentStatus(PaymentStatus paymentStatus, Pageable pageable);
 
     boolean existsByServiceOrder_Id(Long serviceOrderId);
 
     Optional<Invoice> findByServiceOrder_Id(Long serviceOrderId);
+
+    boolean existsByPrescription_Id(Long prescriptionId);
+
+    Optional<Invoice> findByPrescription_Id(Long prescriptionId);
 
     @EntityGraph(attributePaths = {"serviceOrder"})
     List<Invoice> findByServiceOrder_IdIn(Collection<Long> serviceOrderIds);
@@ -57,12 +81,31 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
             "serviceOrder.encounter.doctor",
             "serviceOrder.encounter.patient",
             "serviceOrder.branch",
+            "prescription",
+            "prescription.encounter",
+            "prescription.encounter.appointment",
+            "prescription.encounter.doctor",
+            "prescription.encounter.patient",
+            "prescription.encounter.branch",
             "items"
     })
     Optional<Invoice> findWithLockById(Long id);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "5000"))
+    @EntityGraph(attributePaths = {
+            "serviceOrder",
+            "serviceOrder.encounter",
+            "serviceOrder.encounter.doctor",
+            "serviceOrder.encounter.patient",
+            "serviceOrder.branch",
+            "prescription",
+            "prescription.encounter",
+            "prescription.encounter.doctor",
+            "prescription.encounter.patient",
+            "prescription.encounter.branch",
+            "items"
+    })
     Optional<Invoice> findWithLockByVnpTxnRef(String vnpTxnRef);
 
     @Query("""
@@ -94,6 +137,10 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
             value = """
                     select i.id
                     from Invoice i
+                    left join i.serviceOrder so
+                    left join so.encounter soe
+                    left join i.prescription p
+                    left join p.encounter pe
                     where (:paymentStatus is null or i.paymentStatus = :paymentStatus)
                       and (:fromTime is null or i.createdAt >= :fromTime)
                       and (:toTime is null or i.createdAt < :toTime)
@@ -101,16 +148,22 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
                             :q is null
                             or i.code = :q
                             or i.code like concat(:q, '%')
-                            or i.serviceOrder.code = :q
-                            or i.serviceOrder.code like concat(:q, '%')
-                            or coalesce(i.serviceOrder.encounter.patientPhoneSnapshot, '') = :q
-                            or coalesce(i.serviceOrder.encounter.patientPhoneSnapshot, '') like concat(:q, '%')
-                            or lower(i.serviceOrder.encounter.patientFullNameSnapshot) like concat('%', :qLower, '%')
+                            or coalesce(so.code, '') = :q
+                            or coalesce(so.code, '') like concat(:q, '%')
+                            or coalesce(p.code, '') = :q
+                            or coalesce(p.code, '') like concat(:q, '%')
+                            or coalesce(soe.patientPhoneSnapshot, pe.patientPhoneSnapshot, '') = :q
+                            or coalesce(soe.patientPhoneSnapshot, pe.patientPhoneSnapshot, '') like concat(:q, '%')
+                            or lower(coalesce(soe.patientFullNameSnapshot, pe.patientFullNameSnapshot, '')) like concat('%', :qLower, '%')
                       )
                     """,
             countQuery = """
                     select count(i.id)
                     from Invoice i
+                    left join i.serviceOrder so
+                    left join so.encounter soe
+                    left join i.prescription p
+                    left join p.encounter pe
                     where (:paymentStatus is null or i.paymentStatus = :paymentStatus)
                       and (:fromTime is null or i.createdAt >= :fromTime)
                       and (:toTime is null or i.createdAt < :toTime)
@@ -118,11 +171,13 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
                             :q is null
                             or i.code = :q
                             or i.code like concat(:q, '%')
-                            or i.serviceOrder.code = :q
-                            or i.serviceOrder.code like concat(:q, '%')
-                            or coalesce(i.serviceOrder.encounter.patientPhoneSnapshot, '') = :q
-                            or coalesce(i.serviceOrder.encounter.patientPhoneSnapshot, '') like concat(:q, '%')
-                            or lower(i.serviceOrder.encounter.patientFullNameSnapshot) like concat('%', :qLower, '%')
+                            or coalesce(so.code, '') = :q
+                            or coalesce(so.code, '') like concat(:q, '%')
+                            or coalesce(p.code, '') = :q
+                            or coalesce(p.code, '') like concat(:q, '%')
+                            or coalesce(soe.patientPhoneSnapshot, pe.patientPhoneSnapshot, '') = :q
+                            or coalesce(soe.patientPhoneSnapshot, pe.patientPhoneSnapshot, '') like concat(:q, '%')
+                            or lower(coalesce(soe.patientFullNameSnapshot, pe.patientFullNameSnapshot, '')) like concat('%', :qLower, '%')
                       )
                     """
     )
@@ -141,24 +196,17 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
             "serviceOrder.encounter.doctor",
             "serviceOrder.encounter.patient",
             "serviceOrder.branch",
+            "prescription",
+            "prescription.encounter",
+            "prescription.encounter.doctor",
+            "prescription.encounter.patient",
+            "prescription.encounter.branch",
             "items"
     })
     @Query("select distinct i from Invoice i where i.id in :ids")
     List<Invoice> findAllWithListDetailsByIdIn(@Param("ids") Collection<Long> ids);
 
-    @Query("""
-            select
-              count(i) as invoiceCount,
-              coalesce(sum(case when i.paymentStatus = com.PrimeCare.PrimeCare.shared.enums.PaymentStatus.UNPAID then 1 else 0 end), 0) as unpaidInvoiceCount,
-              coalesce(sum(case when i.paymentStatus = com.PrimeCare.PrimeCare.shared.enums.PaymentStatus.PENDING_CONFIRMATION then 1 else 0 end), 0) as pendingConfirmationInvoiceCount,
-              coalesce(sum(case when i.paymentStatus = com.PrimeCare.PrimeCare.shared.enums.PaymentStatus.PAYMENT_REVIEW then 1 else 0 end), 0) as paymentReviewInvoiceCount,
-              coalesce(sum(case when i.paymentStatus = com.PrimeCare.PrimeCare.shared.enums.PaymentStatus.PAID then 1 else 0 end), 0) as paidInvoiceCount,
-              coalesce(sum(case when i.paymentStatus = com.PrimeCare.PrimeCare.shared.enums.PaymentStatus.REFUNDED then 1 else 0 end), 0) as refundedInvoiceCount,
-              coalesce(sum(case when i.paymentStatus = com.PrimeCare.PrimeCare.shared.enums.PaymentStatus.PAID then i.totalAmount else 0 end), 0) as paidRevenue
-            from Invoice i
-            where (:fromTime is null or i.createdAt >= :fromTime)
-              and (:toTime is null or i.createdAt < :toTime)
-            """)
+    @Query(value = InvoiceRevenueSql.CASHIER_SUMMARY_QUERY, nativeQuery = true)
     CashierInvoiceSummaryRow summarizeCashierInvoices(
             @Param("fromTime") LocalDateTime fromTime,
             @Param("toTime") LocalDateTime toTime

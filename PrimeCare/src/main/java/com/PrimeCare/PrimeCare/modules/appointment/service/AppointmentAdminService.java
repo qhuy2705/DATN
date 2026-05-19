@@ -1,17 +1,22 @@
 package com.PrimeCare.PrimeCare.modules.appointment.service;
 
-import com.PrimeCare.PrimeCare.modules.appointment.config.AppointmentNoShowProperties;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.query.AppointmentStatusCountRow;
+import com.PrimeCare.PrimeCare.modules.appointment.dto.request.AppointmentConfirmRequest;
+import com.PrimeCare.PrimeCare.modules.appointment.dto.request.DoctorCancellationRecoveryRequest;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.request.UpdateAppointmentIntakeRequest;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AppointmentAdminResponse;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AppointmentAvailabilityResponse;
+import com.PrimeCare.PrimeCare.modules.appointment.dto.response.FollowUpQueueItemResponse;
 import com.PrimeCare.PrimeCare.modules.appointment.dto.response.AppointmentStatusSummaryResponse;
 import com.PrimeCare.PrimeCare.modules.appointment.entity.Appointment;
+import com.PrimeCare.PrimeCare.modules.appointment.entity.AppointmentSlotHold;
 import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentCallLogRepository;
 import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentRepository;
+import com.PrimeCare.PrimeCare.modules.appointment.repository.AppointmentSlotHoldRepository;
 import com.PrimeCare.PrimeCare.modules.audit.service.AuditLogService;
 import com.PrimeCare.PrimeCare.modules.auth.entity.User;
 import com.PrimeCare.PrimeCare.modules.auth.repository.UserRepository;
+import com.PrimeCare.PrimeCare.modules.booking_restriction.service.PatientViolationEventService;
 import com.PrimeCare.PrimeCare.modules.doctor_schedule.entity.DoctorWorkSchedule;
 import com.PrimeCare.PrimeCare.modules.doctor_schedule.repository.DoctorWorkScheduleRepository;
 import com.PrimeCare.PrimeCare.modules.encounter.repository.EncounterRepository;
@@ -22,11 +27,22 @@ import com.PrimeCare.PrimeCare.modules.notification.service.InternalNotification
 import com.PrimeCare.PrimeCare.modules.notification.service.AppointmentPdfJobService;
 import com.PrimeCare.PrimeCare.modules.realtime.service.AfterCommitExecutor;
 import com.PrimeCare.PrimeCare.modules.realtime.service.RealtimeEventPublisher;
+import com.PrimeCare.PrimeCare.modules.triage.TriageJsonSupport;
+import com.PrimeCare.PrimeCare.modules.triage.TriageAuditService;
+import com.PrimeCare.PrimeCare.modules.triage.TriageMatchedRule;
+import com.PrimeCare.PrimeCare.modules.triage.TriageMatchedTerm;
+import com.PrimeCare.PrimeCare.modules.triage.TriagePriorityNormalizer;
 import com.PrimeCare.PrimeCare.shared.common.PageResponse;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentSourceType;
+import com.PrimeCare.PrimeCare.shared.enums.AppointmentCancellationReasonType;
+import com.PrimeCare.PrimeCare.shared.enums.AppointmentContactStatus;
+import com.PrimeCare.PrimeCare.shared.enums.AppointmentFollowUpType;
+import com.PrimeCare.PrimeCare.shared.enums.AppointmentPatientResponseStatus;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentStatus;
 import com.PrimeCare.PrimeCare.shared.enums.ArrivalStatus;
+import com.PrimeCare.PrimeCare.shared.enums.CallOutcome;
 import com.PrimeCare.PrimeCare.shared.enums.EncounterStatus;
+import com.PrimeCare.PrimeCare.shared.enums.FollowUpQueueCategory;
 import com.PrimeCare.PrimeCare.shared.enums.UserRole;
 import com.PrimeCare.PrimeCare.shared.exception.ApiException;
 import com.PrimeCare.PrimeCare.shared.exception.ErrorCode;
@@ -43,13 +59,18 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.EnumSet;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class AppointmentAdminService {
+
+    private static final String CANCELLATION_REASON_REQUIRED_MESSAGE = "Cancellation reason is required.";
 
     private static final EnumSet<AppointmentStatus> STAFF_SUMMARY_STATUSES = EnumSet.of(
             AppointmentStatus.REQUESTED,
@@ -70,6 +91,7 @@ public class AppointmentAdminService {
     private static final DateTimeFormatter CLAIM_EXPIRY_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
 
     private final AppointmentRepository appointmentRepository;
+    private final AppointmentSlotHoldRepository appointmentSlotHoldRepository;
     private final UserRepository userRepository;
     private final AppointmentCallLogRepository appointmentCallLogRepository;
     private final AppointmentMailEventPublisher appointmentMailEventPublisher;
@@ -86,8 +108,11 @@ public class AppointmentAdminService {
     private final AuditLogService auditLogService;
     private final RealtimeEventPublisher realtimeEventPublisher;
     private final AfterCommitExecutor afterCommitExecutor;
-    private final AppointmentNoShowProperties noShowProperties;
     private final InternalNotificationService internalNotificationService;
+    private final TriageAuditService triageAuditService;
+    private final DoctorCancellationRecoveryService doctorCancellationRecoveryService;
+    private final PatientViolationEventService patientViolationEventService;
+    private final AppointmentResponseService appointmentResponseService;
 
     @Value("${app.appointment.claim.ttl-minutes:5}")
     private long claimTtlMinutes;
@@ -136,8 +161,49 @@ public class AppointmentAdminService {
     }
 
     @Transactional(readOnly = true)
+    public PageResponse<FollowUpQueueItemResponse> getFollowUpQueue(
+            FollowUpQueueCategory category,
+            AppointmentFollowUpType followUpType,
+            String q,
+            Pageable pageable
+    ) {
+        String keyword = StringUtil.trimToNull(q);
+        FollowUpFilter filter = followUpFilter(category, followUpType);
+        Page<Appointment> page = appointmentRepository.searchFollowUpQueue(
+                filter.followUpTypes(),
+                filter.filterTypes(),
+                filter.includeLegacyNoShow(),
+                keyword,
+                keyword != null ? keyword.toLowerCase(java.util.Locale.ROOT) : null,
+                pageable
+        );
+        Map<Long, AppointmentSlotHold> latestHolds = latestSlotHoldsByAppointmentId(page.getContent());
+
+        return PageResponse.<FollowUpQueueItemResponse>builder()
+                           .items(page.getContent()
+                                      .stream()
+                                      .map(appointment -> toFollowUpQueueItemResponse(
+                                              appointment,
+                                              latestHolds.get(appointment.getId())
+                                      ))
+                                      .toList())
+                           .meta(PageResponse.Meta.builder()
+                                                  .page(page.getNumber())
+                                                  .size(page.getSize())
+                                                  .totalItems(page.getTotalElements())
+                                                  .totalPages(page.getTotalPages())
+                                                  .hasNext(page.hasNext())
+                                                  .hasPrev(page.hasPrevious())
+                                                  .sort(pageable.getSort().toString())
+                                                  .build())
+                           .build();
+    }
+
+    @Transactional(readOnly = true)
     public AppointmentAdminResponse getDetail(Long appointmentId) {
-        return toAdminResponse(getAppointment(appointmentId));
+        AppointmentAdminResponse response = toAdminResponse(getAppointment(appointmentId));
+        response.setTriageAuditLogs(triageAuditService.findResponses(appointmentId));
+        return response;
     }
 
     @Transactional
@@ -270,21 +336,55 @@ public class AppointmentAdminService {
 
         Map<String, Object> before = snapshotAppointment(appointment);
 
-        appointment.setReasonForVisit(StringUtil.trimToNull(request.getReasonForVisit()));
-        appointment.setVisitType(normalizeCode(request.getVisitType()));
-        appointment.setTriagePriority(normalizeCode(request.getTriagePriority()));
-        appointment.setTriageNote(StringUtil.trimToNull(request.getTriageNote()));
-        appointment.setInsuranceNote(StringUtil.trimToNull(request.getInsuranceNote()));
-        appointment.setEmergencyContactName(StringUtil.trimToNull(request.getEmergencyContactName()));
-        appointment.setEmergencyContactPhone(StringUtil.trimToNull(request.getEmergencyContactPhone()));
-        appointment.setHeightCm(request.getHeightCm());
-        appointment.setWeightKg(request.getWeightKg());
-        appointment.setTemperatureC(request.getTemperatureC());
-        appointment.setPulse(request.getPulse());
-        appointment.setSystolicBp(request.getSystolicBp());
-        appointment.setDiastolicBp(request.getDiastolicBp());
-        appointment.setRespiratoryRate(request.getRespiratoryRate());
-        appointment.setSpo2(request.getSpo2());
+        if (request.getReasonForVisit() != null) {
+            appointment.setReasonForVisit(StringUtil.trimToNull(request.getReasonForVisit()));
+        }
+        if (request.getVisitType() != null) {
+            appointment.setVisitType(normalizeCode(request.getVisitType()));
+        }
+        if (request.getTriagePriority() != null) {
+            String normalizedPriority = TriagePriorityNormalizer.normalizePriority(request.getTriagePriority());
+            if (normalizedPriority == null && StringUtil.trimToNull(request.getTriagePriority()) != null) {
+                throw new ApiException(ErrorCode.VALIDATION_ERROR, "Mức ưu tiên khám không hợp lệ");
+            }
+            appointment.setTriagePriority(normalizedPriority);
+        }
+        if (request.getTriageNote() != null) {
+            appointment.setTriageNote(StringUtil.trimToNull(request.getTriageNote()));
+        }
+        if (request.getInsuranceNote() != null) {
+            appointment.setInsuranceNote(StringUtil.trimToNull(request.getInsuranceNote()));
+        }
+        if (request.getEmergencyContactName() != null) {
+            appointment.setEmergencyContactName(StringUtil.trimToNull(request.getEmergencyContactName()));
+        }
+        if (request.getEmergencyContactPhone() != null) {
+            appointment.setEmergencyContactPhone(StringUtil.trimToNull(request.getEmergencyContactPhone()));
+        }
+        if (request.getHeightCm() != null) {
+            appointment.setHeightCm(request.getHeightCm());
+        }
+        if (request.getWeightKg() != null) {
+            appointment.setWeightKg(request.getWeightKg());
+        }
+        if (request.getTemperatureC() != null) {
+            appointment.setTemperatureC(request.getTemperatureC());
+        }
+        if (request.getPulse() != null) {
+            appointment.setPulse(request.getPulse());
+        }
+        if (request.getSystolicBp() != null) {
+            appointment.setSystolicBp(request.getSystolicBp());
+        }
+        if (request.getDiastolicBp() != null) {
+            appointment.setDiastolicBp(request.getDiastolicBp());
+        }
+        if (request.getRespiratoryRate() != null) {
+            appointment.setRespiratoryRate(request.getRespiratoryRate());
+        }
+        if (request.getSpo2() != null) {
+            appointment.setSpo2(request.getSpo2());
+        }
         appointment.setIntakeCompletedBy(staff);
         appointment.setIntakeCompletedAt(LocalDateTime.now());
 
@@ -297,9 +397,10 @@ public class AppointmentAdminService {
     }
 
     @Transactional
-    public AppointmentAdminResponse confirm(Long appointmentId, Long staffUserId, String note) {
+    public AppointmentAdminResponse confirm(Long appointmentId, Long staffUserId, AppointmentConfirmRequest request) {
         Appointment appointment = getAppointment(appointmentId);
         User staff = getUser(staffUserId);
+        String note = request != null ? request.getNote() : null;
 
         validateClaimOwnership(appointment, staffUserId);
 
@@ -313,6 +414,9 @@ public class AppointmentAdminService {
         appointment.setStatus(AppointmentStatus.CONFIRMED);
         appointment.setConfirmedBy(staff);
         appointment.setConfirmedAt(LocalDateTime.now());
+        appointment.setContactStatus(AppointmentContactStatus.PHONE_STAFF_VERIFIED);
+        appointment.setPatientResponseStatus(AppointmentPatientResponseStatus.NONE);
+        TriageReviewAuditPayload triageReviewAudit = applyTriageReview(appointment, staff, request);
 
         clearProcessingClaim(appointment);
 
@@ -332,7 +436,17 @@ public class AppointmentAdminService {
         saveCallLog(saved, staff, com.PrimeCare.PrimeCare.shared.enums.CallOutcome.CONFIRMED, note);
         appointmentStatusHistoryService.record(saved, previousStatus, saved.getStatus(), staff, note);
 
-        auditLogService.log(staff, "CONFIRM", "APPOINTMENT", saved.getId(), before, snapshotAppointment(saved));
+        auditLogService.log(staff, "CONFIRM_APPOINTMENT", "APPOINTMENT", saved.getId(), before, snapshotAppointment(saved));
+        if (triageReviewAudit != null) {
+            triageAuditService.recordStaffReview(
+                    saved,
+                    staff,
+                    triageReviewAudit.action(),
+                    triageReviewAudit.fromPriority(),
+                    triageReviewAudit.toPriority(),
+                    triageReviewAudit.reason()
+            );
+        }
 
         if (saved.getPatientEmail() != null && !saved.getPatientEmail().isBlank()) {
             appointmentPdfJobService.requestGenerate(saved);
@@ -342,7 +456,166 @@ public class AppointmentAdminService {
     }
 
     @Transactional
+    public AppointmentAdminResponse recordCallResult(
+            Long appointmentId,
+            Long staffUserId,
+            CallOutcome outcome,
+            String note,
+            boolean sendFallbackEmail
+    ) {
+        if (outcome == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Kết quả cuộc gọi là bắt buộc.");
+        }
+        if (outcome == CallOutcome.CONFIRMED) {
+            AppointmentConfirmRequest request = new AppointmentConfirmRequest();
+            request.setNote(note);
+            return confirm(appointmentId, staffUserId, request);
+        }
+
+        Appointment appointment = getAppointment(appointmentId);
+        User staff = getUser(staffUserId);
+        validateClaimOwnership(appointment, staffUserId);
+
+        if (appointment.getStatus() != AppointmentStatus.REQUESTED) {
+            throw new ApiException(ErrorCode.APPOINTMENT_INVALID_STATUS);
+        }
+        if (!isUnreachableOutcome(outcome)) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Kết quả cuộc gọi không hỗ trợ fallback email.");
+        }
+
+        Map<String, Object> before = snapshotAppointment(appointment);
+        appointment.setContactStatus(AppointmentContactStatus.PHONE_UNREACHABLE);
+        appointment.setPatientResponseStatus(AppointmentPatientResponseStatus.NEED_PATIENT_RESPONSE);
+        Appointment saved = appointmentRepository.save(appointment);
+        saveCallLog(saved, staff, outcome, note);
+        auditLogService.log(staff, "APPOINTMENT_CALL_UNREACHABLE", "APPOINTMENT", saved.getId(), before, snapshotAppointment(saved));
+        publishProcessingChanged(saved);
+
+        if (sendFallbackEmail) {
+            appointmentResponseService.sendFallbackEmail(saved, staff, note);
+        }
+
+        return toAdminResponse(saved);
+    }
+
+    @Transactional
+    public AppointmentAdminResponse markWrongContactViolation(Long appointmentId, Long staffUserId, String reason) {
+        Appointment appointment = getAppointment(appointmentId);
+        User staff = getUser(staffUserId);
+        validateClaimOwnership(appointment, staffUserId);
+        patientViolationEventService.recordWrongContact(appointment, staff, reason);
+        auditLogService.log(staff, "MARK_WRONG_CONTACT_VIOLATION", "APPOINTMENT", appointment.getId(), null, Map.of(
+                "appointmentId", appointment.getId(),
+                "reason", StringUtil.trimToNull(reason)
+        ));
+        return toAdminResponse(appointment);
+    }
+
+    private TriageReviewAuditPayload applyTriageReview(Appointment appointment, User staff, AppointmentConfirmRequest request) {
+        if (request == null) {
+            return null;
+        }
+
+        String requestedPriority = TriagePriorityNormalizer.normalizePriority(request.getTriagePriority());
+        String requestedReviewStatus = TriagePriorityNormalizer.normalizeReviewStatus(request.getTriageReviewStatus());
+        String overrideReason = StringUtil.trimToNull(request.getTriageOverrideReason());
+        boolean hasPriorityPayload = StringUtil.trimToNull(request.getTriagePriority()) != null;
+        boolean hasReviewStatusPayload = StringUtil.trimToNull(request.getTriageReviewStatus()) != null;
+
+        if (hasPriorityPayload && requestedPriority == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Mức ưu tiên khám không hợp lệ");
+        }
+        if (hasReviewStatusPayload && requestedReviewStatus == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Trạng thái review ưu tiên không hợp lệ");
+        }
+
+        if (requestedPriority == null
+                && "ACCEPTED".equals(requestedReviewStatus)
+                && StringUtil.trimToNull(appointment.getPreTriagePriority()) != null) {
+            requestedPriority = TriagePriorityNormalizer.normalizePriority(appointment.getPreTriagePriority());
+        }
+
+        if (requestedPriority == null) {
+            return null;
+        }
+
+        String suggestedPriority = TriagePriorityNormalizer.normalizePriority(appointment.getPreTriagePriority());
+        boolean overridden = suggestedPriority != null && !suggestedPriority.equals(requestedPriority);
+        if (overridden && overrideReason == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Vui lòng nhập lý do khi override mức ưu tiên gợi ý");
+        }
+
+        String reviewStatus = requestedReviewStatus != null
+                ? requestedReviewStatus
+                : suggestedPriority == null ? "MANUAL" : overridden ? "OVERRIDDEN" : "ACCEPTED";
+        if (suggestedPriority == null && "ACCEPTED".equals(reviewStatus)) {
+            reviewStatus = "MANUAL";
+        }
+        if (overridden && !"OVERRIDDEN".equals(reviewStatus)) {
+            reviewStatus = "OVERRIDDEN";
+        }
+
+        appointment.setTriagePriority(requestedPriority);
+        appointment.setTriageNote(StringUtil.trimToNull(request.getTriageNote()));
+        appointment.setTriageReviewStatus(reviewStatus);
+        appointment.setTriageReviewedBy(staff);
+        appointment.setTriageReviewedAt(LocalDateTime.now());
+        appointment.setTriageOverrideReason(overrideReason);
+        String action = resolveTriageReviewAction(suggestedPriority, requestedPriority, reviewStatus, overridden);
+        String auditReason = auditReasonForTriageAction(action, request, overrideReason);
+        return new TriageReviewAuditPayload(action, suggestedPriority, requestedPriority, auditReason);
+    }
+
+    private String resolveTriageReviewAction(
+            String suggestedPriority,
+            String requestedPriority,
+            String reviewStatus,
+            boolean overridden
+    ) {
+        if (overridden || "OVERRIDDEN".equals(reviewStatus)) {
+            return TriageAuditService.ACTION_TRIAGE_OVERRIDDEN;
+        }
+        if (suggestedPriority == null || "MANUAL".equals(reviewStatus)) {
+            return TriageAuditService.ACTION_TRIAGE_MANUAL_SET;
+        }
+        return TriageAuditService.ACTION_TRIAGE_ACCEPTED;
+    }
+
+    private String auditReasonForTriageAction(
+            String action,
+            AppointmentConfirmRequest request,
+            String overrideReason
+    ) {
+        if (TriageAuditService.ACTION_TRIAGE_OVERRIDDEN.equals(action)) {
+            return overrideReason;
+        }
+        String triageNote = request != null ? StringUtil.trimToNull(request.getTriageNote()) : null;
+        if (TriageAuditService.ACTION_TRIAGE_ACCEPTED.equals(action)) {
+            return triageNote != null ? triageNote : "Staff chấp nhận gợi ý";
+        }
+        return triageNote != null ? triageNote : overrideReason;
+    }
+
+    @Transactional
     public AppointmentAdminResponse cancel(Long appointmentId, Long staffUserId, String reason) {
+        return cancel(appointmentId, staffUserId, reason, AppointmentCancellationReasonType.STAFF_MANUAL, false, false, null);
+    }
+
+    @Transactional
+    public AppointmentAdminResponse cancel(
+            Long appointmentId,
+            Long staffUserId,
+            String reason,
+            AppointmentCancellationReasonType cancellationReasonType,
+            boolean enableRecoveryFlow,
+            boolean countAsViolation,
+            String violationNote
+    ) {
+        String normalizedReason = StringUtil.trimToNull(reason);
+        if (normalizedReason == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, CANCELLATION_REASON_REQUIRED_MESSAGE);
+        }
+
         Appointment appointment = getAppointment(appointmentId);
         User staff = getUser(staffUserId);
 
@@ -363,10 +636,31 @@ public class AppointmentAdminService {
         Map<String, Object> before = snapshotAppointment(appointment);
         AppointmentStatus previousStatus = appointment.getStatus();
 
+        AppointmentCancellationReasonType effectiveReasonType = cancellationReasonType != null
+                ? cancellationReasonType
+                : AppointmentCancellationReasonType.STAFF_MANUAL;
+
+        if (effectiveReasonType == AppointmentCancellationReasonType.DOCTOR_UNAVAILABLE) {
+            if (!enableRecoveryFlow) {
+                throw new ApiException(
+                        ErrorCode.INVALID_REQUEST,
+                        "Hủy do bác sĩ/phòng khám không thể phục vụ cần bật enableRecoveryFlow để hệ thống hỗ trợ dời lịch."
+                );
+            }
+            doctorCancellationRecoveryService.recoverSingleDoctorCancellation(appointment, staff, normalizedReason);
+            Appointment saved = getAppointment(appointmentId);
+            publishSummaryChanged(saved);
+            publishAppointmentUpdated(saved, previousStatus);
+            publishProcessingChanged(saved);
+            auditLogService.log(staff, "DOCTOR_CANCELLATION_RECOVERY", "APPOINTMENT", saved.getId(), before, snapshotAppointment(saved));
+            return toAdminResponse(saved);
+        }
+
         appointment.setStatus(AppointmentStatus.CANCELLED);
         appointment.setCancelledBy(staff);
         appointment.setCancelledAt(LocalDateTime.now());
-        appointment.setCancelReason(StringUtil.trimToNull(reason));
+        appointment.setCancelReason(normalizedReason);
+        appointment.setCancellationReasonType(effectiveReasonType);
         appointment.setQueueNo(null);
 
         clearProcessingClaim(appointment);
@@ -385,12 +679,60 @@ public class AppointmentAdminService {
         publishAppointmentUpdated(saved, previousStatus);
         publishProcessingChanged(saved);
 
-        saveCallLog(saved, staff, com.PrimeCare.PrimeCare.shared.enums.CallOutcome.CANCELLED, reason);
-        appointmentStatusHistoryService.record(saved, previousStatus, saved.getStatus(), staff, reason);
+        saveCallLog(saved, staff, com.PrimeCare.PrimeCare.shared.enums.CallOutcome.CANCELLED, normalizedReason);
+        appointmentStatusHistoryService.record(saved, previousStatus, saved.getStatus(), staff, normalizedReason);
 
-        auditLogService.log(staff, "CANCEL", "APPOINTMENT", saved.getId(), before, snapshotAppointment(saved));
+        auditLogService.log(staff, "CANCEL_APPOINTMENT", "APPOINTMENT", saved.getId(), before, snapshotAppointment(saved));
+        patientViolationEventService.recordLateCancelIfEligible(
+                saved,
+                staff,
+                effectiveReasonType,
+                countAsViolation,
+                violationNote != null ? violationNote : normalizedReason
+        );
 
         return toAdminResponse(saved);
+    }
+
+    @Transactional
+    public List<AppointmentAdminResponse> recoverDoctorCancellationRange(
+            Long staffUserId,
+            DoctorCancellationRecoveryRequest request
+    ) {
+        User staff = getUser(staffUserId);
+        validateDoctorCancellationRequest(request);
+
+        List<Appointment> affectedAppointments = appointmentRepository.findAffectedForDoctorRecovery(
+                        request.getDoctorId(),
+                        request.getStartDate(),
+                        request.getEndDate(),
+                        EnumSet.of(AppointmentStatus.REQUESTED, AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN)
+                )
+                .stream()
+                .filter(appointment -> isSessionCovered(
+                        appointment.getVisitDate(),
+                        appointment.getSession(),
+                        request.getStartDate(),
+                        request.getEndDate(),
+                        request.getStartSession(),
+                        request.getEndSession()
+                ))
+                .toList();
+
+        Map<Long, AppointmentStatus> previousStatuses = affectedAppointments.stream()
+                .collect(Collectors.toMap(Appointment::getId, Appointment::getStatus));
+
+        doctorCancellationRecoveryService.recoverDoctorCancellation(affectedAppointments, staff, request.getReason());
+
+        List<AppointmentAdminResponse> responses = new ArrayList<>();
+        for (Appointment appointment : affectedAppointments) {
+            Appointment saved = getAppointment(appointment.getId());
+            publishSummaryChanged(saved);
+            publishAppointmentUpdated(saved, previousStatuses.get(saved.getId()));
+            publishProcessingChanged(saved);
+            responses.add(toAdminResponse(saved));
+        }
+        return responses;
     }
 
     private boolean hasActiveEncounter(Long appointmentId) {
@@ -424,25 +766,18 @@ public class AppointmentAdminService {
         Map<String, Object> before = snapshotAppointment(appointment);
         AppointmentStatus previousStatus = appointment.getStatus();
         LocalDateTime now = LocalDateTime.now();
+        boolean needsArrivalQueueNumber = appointment.getArrivalStatus() != ArrivalStatus.ARRIVED;
 
-        if (appointment.getArrivalStatus() != ArrivalStatus.ARRIVED) {
-            appointment.setArrivalStatus(ArrivalStatus.ARRIVED);
-            appointment.setArrivedAt(now);
-            appointment.setArrivedBy(staff);
-
-            if (appointment.getReceptionQueueNo() == null) {
-                appointment.setReceptionQueueNo(
-                        receptionQueueAllocator.allocateNext(
-                                appointment.getBranch().getId(),
-                                appointment.getVisitDate()
-                        )
-                );
-            }
+        if (needsArrivalQueueNumber && appointment.getReceptionQueueNo() == null) {
+            appointment.setReceptionQueueNo(
+                    receptionQueueAllocator.allocateNext(
+                            appointment.getBranch().getId(),
+                            appointment.getVisitDate()
+                    )
+            );
         }
 
-        appointment.setStatus(AppointmentStatus.CHECKED_IN);
-        appointment.setCheckedInBy(staff);
-        appointment.setCheckedInAt(now);
+        AppointmentCheckInState.apply(appointment, staff, now);
 
         Appointment saved = appointmentRepository.save(appointment);
         publishSummaryChanged(saved);
@@ -450,7 +785,7 @@ public class AppointmentAdminService {
         notifyDoctorAppointmentCheckedIn(saved);
         appointmentStatusHistoryService.record(saved, previousStatus, saved.getStatus(), staff, "Check-in by QR");
 
-        auditLogService.log(staff, "CHECK_IN", "APPOINTMENT", saved.getId(), before, snapshotAppointment(saved));
+        auditLogService.log(staff, "QR_CHECK_IN", "APPOINTMENT", saved.getId(), before, snapshotAppointment(saved));
 
         return toAdminResponse(saved);
     }
@@ -467,14 +802,10 @@ public class AppointmentAdminService {
             throw new ApiException(ErrorCode.APPOINTMENT_INVALID_STATUS, "Bệnh nhân đã đến hoặc đã check-in");
         }
 
-        if (appointment.getEtaStart() == null) {
-            throw new ApiException(ErrorCode.APPOINTMENT_TOO_EARLY_FOR_NO_SHOW);
-        }
-
-        LocalDateTime threshold = LocalDateTime.of(appointment.getVisitDate(), appointment.getEtaStart())
-                                               .plusMinutes(noShowProperties.effectiveGraceMinutes());
-        if (LocalDateTime.now().isBefore(threshold)) {
-            throw new ApiException(ErrorCode.APPOINTMENT_TOO_EARLY_FOR_NO_SHOW);
+        LocalDateTime now = LocalDateTime.now();
+        String blockedReason = noShowBlockedReason(appointment, now);
+        if (blockedReason != null) {
+            throw new ApiException(ErrorCode.APPOINTMENT_TOO_EARLY_FOR_NO_SHOW, blockedReason);
         }
 
         validateClaimOwnership(appointment, staffUserId);
@@ -487,6 +818,7 @@ public class AppointmentAdminService {
         appointment.setNoShowMarkedAt(LocalDateTime.now());
         appointment.setNoShowNote(StringUtil.trimToNull(note));
         appointment.setFollowUpPending(true);
+        appointment.setFollowUpType(AppointmentFollowUpType.NO_SHOW);
 
         Appointment saved = appointmentRepository.save(appointment);
         publishSummaryChanged(saved);
@@ -497,6 +829,7 @@ public class AppointmentAdminService {
         appointmentStatusHistoryService.record(saved, previousStatus, saved.getStatus(), staff, note);
 
         auditLogService.log(staff, "MARK_NO_SHOW", "APPOINTMENT", saved.getId(), before, snapshotAppointment(saved));
+        patientViolationEventService.recordNoShow(saved, staff, note);
 
         return toAdminResponse(saved);
     }
@@ -561,8 +894,7 @@ public class AppointmentAdminService {
                 || appointment.getStatus() == AppointmentStatus.CONFIRMED) {
             return true;
         }
-        return appointment.getStatus() == AppointmentStatus.NO_SHOW
-                && Boolean.TRUE.equals(appointment.getFollowUpPending());
+        return Boolean.TRUE.equals(appointment.getFollowUpPending());
     }
 
     private boolean hasActiveClaimByAnotherUser(Appointment appointment, Long currentUserId, LocalDateTime now) {
@@ -678,11 +1010,113 @@ public class AppointmentAdminService {
     }
 
     private LocalTime overdueCutoffTime(LocalDateTime now) {
-        LocalDateTime cutoff = now.minusMinutes(noShowProperties.effectiveGraceMinutes());
-        if (!cutoff.toLocalDate().equals(LocalDate.now())) {
+        if (!now.toLocalDate().equals(LocalDate.now())) {
             return LocalTime.MIN;
         }
-        return cutoff.toLocalTime();
+        return now.toLocalTime();
+    }
+
+    private FollowUpFilter followUpFilter(
+            FollowUpQueueCategory category,
+            AppointmentFollowUpType followUpType
+    ) {
+        if (followUpType != null) {
+            return new FollowUpFilter(
+                    EnumSet.of(followUpType),
+                    true,
+                    followUpType == AppointmentFollowUpType.NO_SHOW
+            );
+        }
+
+        FollowUpQueueCategory effectiveCategory = category != null ? category : FollowUpQueueCategory.ALL;
+        return new FollowUpFilter(
+                effectiveCategory.followUpTypes(),
+                effectiveCategory.filtersTypes(),
+                effectiveCategory.includesLegacyNoShow()
+        );
+    }
+
+    private Map<Long, AppointmentSlotHold> latestSlotHoldsByAppointmentId(List<Appointment> appointments) {
+        if (appointments == null || appointments.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Long> appointmentIds = appointments.stream()
+                                                .map(Appointment::getId)
+                                                .filter(id -> id != null)
+                                                .toList();
+        if (appointmentIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, AppointmentSlotHold> holdsByAppointmentId = new LinkedHashMap<>();
+        for (AppointmentSlotHold hold : appointmentSlotHoldRepository.findLatestByOriginalAppointmentIds(appointmentIds)) {
+            if (hold.getOriginalAppointment() != null && hold.getOriginalAppointment().getId() != null) {
+                holdsByAppointmentId.putIfAbsent(hold.getOriginalAppointment().getId(), hold);
+            }
+        }
+        return holdsByAppointmentId;
+    }
+
+    private FollowUpQueueItemResponse toFollowUpQueueItemResponse(
+            Appointment appointment,
+            AppointmentSlotHold hold
+    ) {
+        return FollowUpQueueItemResponse.builder()
+                                        .id(appointment.getId())
+                                        .appointmentId(appointment.getId())
+                                        .appointmentCode(appointment.getCode())
+                                        .followUpType(resolveFollowUpType(appointment))
+                                        .followUpCategory(resolveFollowUpCategory(appointment))
+                                        .patientFullName(appointment.getPatientFullName())
+                                        .patientPhone(appointment.getPatientPhone())
+                                        .patientEmail(appointment.getPatientEmail())
+                                        .doctorName(appointment.getDoctor() != null ? appointment.getDoctor().getFullName() : null)
+                                        .specialtyName(appointment.getSpecialty() != null ? appointment.getSpecialty().getNameVn() : null)
+                                        .originalVisitDate(appointment.getVisitDate())
+                                        .originalSlotStart(appointment.getEtaStart())
+                                        .originalSlotEnd(appointment.getEtaEnd())
+                                        .heldDoctorName(hold != null && hold.getDoctor() != null ? hold.getDoctor().getFullName() : null)
+                                        .heldVisitDate(hold != null ? hold.getVisitDate() : null)
+                                        .heldSlotStart(hold != null ? hold.getSlotStart() : null)
+                                        .heldSlotEnd(hold != null ? hold.getSlotEnd() : null)
+                                        .holdStatus(hold != null && hold.getStatus() != null ? hold.getStatus().name() : null)
+                                        .expiresAt(hold != null ? hold.getExpiresAt() : null)
+                                        .createdAt(followUpCreatedAt(appointment))
+                                        .followUpPending(Boolean.TRUE.equals(appointment.getFollowUpPending()))
+                                        .contactStatus(appointment.getContactStatus() != null ? appointment.getContactStatus().name() : null)
+                                        .patientResponseStatus(appointment.getPatientResponseStatus() != null ? appointment.getPatientResponseStatus().name() : null)
+                                        .build();
+    }
+
+    private String resolveFollowUpType(Appointment appointment) {
+        if (appointment.getFollowUpType() != null) {
+            return appointment.getFollowUpType().name();
+        }
+        if (appointment.getStatus() == AppointmentStatus.NO_SHOW) {
+            return AppointmentFollowUpType.NO_SHOW.name();
+        }
+        return null;
+    }
+
+    private String resolveFollowUpCategory(Appointment appointment) {
+        AppointmentFollowUpType followUpType = appointment.getFollowUpType();
+        if (followUpType == null && appointment.getStatus() == AppointmentStatus.NO_SHOW) {
+            followUpType = AppointmentFollowUpType.NO_SHOW;
+        }
+
+        FollowUpQueueCategory category = FollowUpQueueCategory.categoryOf(followUpType);
+        return category != null ? category.name() : null;
+    }
+
+    private LocalDateTime followUpCreatedAt(Appointment appointment) {
+        if (appointment.getNoShowMarkedAt() != null) {
+            return appointment.getNoShowMarkedAt();
+        }
+        if (appointment.getUpdatedAt() != null) {
+            return appointment.getUpdatedAt();
+        }
+        return appointment.getCreatedAt();
     }
 
     private AppointmentAdminResponse toAdminResponse(Appointment entity) {
@@ -705,10 +1139,34 @@ public class AppointmentAdminService {
                                        .patientFullName(entity.getPatientFullName())
                                        .patientPhone(entity.getPatientPhone())
                                        .patientEmail(entity.getPatientEmail())
+                                       .contactStatus(entity.getContactStatus())
+                                       .patientResponseStatus(entity.getPatientResponseStatus())
                                        .reasonForVisit(entity.getReasonForVisit())
                                        .visitType(entity.getVisitType())
                                        .triagePriority(entity.getTriagePriority())
                                        .triageNote(entity.getTriageNote())
+                                       .preTriageLevel(entity.getPreTriageLevel())
+                                       .preTriagePriority(entity.getPreTriagePriority())
+                                       .preTriageFlags(TriageJsonSupport.readStringList(entity.getPreTriageFlagsJson()))
+                                       .preTriageReasons(TriageJsonSupport.readStringList(entity.getPreTriageReasonsJson()))
+                                       .preTriageSummary(entity.getPreTriageSummary())
+                                       .preTriageAssessedAt(entity.getPreTriageAssessedAt())
+                                       .symptomOnset(entity.getSymptomOnset())
+                                       .chronicConditions(TriageJsonSupport.readStringList(entity.getChronicConditionsJson()))
+                                       .chronicConditionOthers(TriageJsonSupport.readStringList(entity.getChronicConditionOthersJson()))
+                                       .functionalImpact(entity.getFunctionalImpact())
+                                       .redFlagSelections(TriageJsonSupport.readStringList(entity.getRedFlagSelectionsJson()))
+                                       .preTriageMatchedTerms(TriageJsonSupport.readObjectList(entity.getPreTriageMatchedTermsJson(), TriageMatchedTerm.class))
+                                       .preTriageMatchedRules(TriageJsonSupport.readObjectList(entity.getPreTriageMatchedRulesJson(), TriageMatchedRule.class))
+                                       .preTriageSource(entity.getPreTriageSource())
+                                       .preTriageConfidenceLevel(entity.getPreTriageConfidenceLevel())
+                                       .preTriageKnowledgeBaseVersion(entity.getPreTriageKnowledgeBaseVersion())
+                                       .preTriageRulesetVersion(entity.getPreTriageRulesetVersion())
+                                       .preTriageAiModelVersion(entity.getPreTriageAiModelVersion())
+                                       .triageReviewStatus(entity.getTriageReviewStatus())
+                                       .triageReviewedAt(entity.getTriageReviewedAt())
+                                       .triageReviewedByName(entity.getTriageReviewedBy() != null ? resolveUserDisplayName(entity.getTriageReviewedBy()) : null)
+                                       .triageOverrideReason(entity.getTriageOverrideReason())
                                        .receptionPriority(entity.getTriagePriority())
                                        .receptionNote(entity.getTriageNote())
                                        .insuranceNote(entity.getInsuranceNote())
@@ -738,10 +1196,17 @@ public class AppointmentAdminService {
                                        .confirmedByName(entity.getConfirmedBy() != null ? resolveUserDisplayName(entity.getConfirmedBy()) : null)
                                        .checkedInAt(entity.getCheckedInAt())
                                        .checkedInByName(entity.getCheckedInBy() != null ? resolveUserDisplayName(entity.getCheckedInBy()) : null)
+                                       .checkedInLate(Boolean.TRUE.equals(entity.getCheckedInLate()))
+                                       .lateMinutes(entity.getLateMinutes() != null ? entity.getLateMinutes() : 0)
                                        .noShowMarkedAt(entity.getNoShowMarkedAt())
                                        .noShowMarkedByName(entity.getNoShowMarkedBy() != null ? resolveUserDisplayName(entity.getNoShowMarkedBy()) : null)
                                        .noShowNote(entity.getNoShowNote())
+                                       .cancellationReasonType(entity.getCancellationReasonType() != null ? entity.getCancellationReasonType().name() : null)
+                                       .canMarkNoShow(noShowBlockedReason(entity) == null)
+                                       .noShowEligibleAt(noShowEligibleAt(entity))
+                                       .noShowBlockedReason(noShowBlockedReason(entity))
                                        .followUpPending(Boolean.TRUE.equals(entity.getFollowUpPending()))
+                                       .followUpType(entity.getFollowUpType() != null ? entity.getFollowUpType().name() : null)
                                        .rescheduledFromAppointmentId(entity.getRescheduledFromAppointment() != null ? entity.getRescheduledFromAppointment().getId() : null)
                                        .rescheduledToAppointmentId(resolveRescheduledToAppointmentId(entity.getId()))
                                        .build();
@@ -764,6 +1229,18 @@ public class AppointmentAdminService {
         return appointmentRepository.findFirstByRescheduledFromAppointment_IdOrderByCreatedAtDesc(appointmentId)
                                     .map(Appointment::getId)
                                     .orElse(null);
+    }
+
+    private LocalDateTime noShowEligibleAt(Appointment appointment) {
+        return AppointmentTimingPolicy.noShowEligibleAt(appointment);
+    }
+
+    private String noShowBlockedReason(Appointment appointment) {
+        return noShowBlockedReason(appointment, LocalDateTime.now());
+    }
+
+    private String noShowBlockedReason(Appointment appointment, LocalDateTime now) {
+        return AppointmentTimingPolicy.noShowBlockedReason(appointment, now);
     }
 
     private void notifyStaffNoShowFollowUp(Appointment appointment) {
@@ -798,6 +1275,20 @@ public class AppointmentAdminService {
                 "APPOINTMENT_NO_SHOW_RESOLVED",
                 InternalNotificationService.SEVERITY_INFO,
                 "Đã đóng follow-up no-show",
+                message,
+                "/app/appointments/" + appointment.getId() + "/process",
+                "APPOINTMENT",
+                appointment.getId()
+        );
+    }
+
+    private void notifyStaffFollowUpResolved(Appointment appointment) {
+        String message = "Follow-up của lịch hẹn " + appointment.getCode() + " đã được xử lý.";
+        internalNotificationService.notifyRole(
+                UserRole.STAFF,
+                "APPOINTMENT_FOLLOW_UP_RESOLVED",
+                InternalNotificationService.SEVERITY_INFO,
+                "Đã đóng follow-up",
                 message,
                 "/app/appointments/" + appointment.getId() + "/process",
                 "APPOINTMENT",
@@ -850,6 +1341,12 @@ public class AppointmentAdminService {
                                                                                      .note(StringUtil.trimToNull(note))
                                                                                      .build()
         );
+    }
+
+    private boolean isUnreachableOutcome(CallOutcome outcome) {
+        return outcome == CallOutcome.NO_ANSWER
+                || outcome == CallOutcome.BUSY
+                || outcome == CallOutcome.WRONG_NUMBER;
     }
 
     @Transactional(readOnly = true)
@@ -998,6 +1495,28 @@ public class AppointmentAdminService {
                                                 .visitType(oldAppointment.getVisitType())
                                                 .triagePriority(oldAppointment.getTriagePriority())
                                                 .triageNote(oldAppointment.getTriageNote())
+                                                .preTriageLevel(oldAppointment.getPreTriageLevel())
+                                                .preTriagePriority(oldAppointment.getPreTriagePriority())
+                                                .preTriageFlagsJson(oldAppointment.getPreTriageFlagsJson())
+                                                .preTriageReasonsJson(oldAppointment.getPreTriageReasonsJson())
+                                                .preTriageSummary(oldAppointment.getPreTriageSummary())
+                                                .preTriageAssessedAt(oldAppointment.getPreTriageAssessedAt())
+                                                .symptomOnset(oldAppointment.getSymptomOnset())
+                                                .chronicConditionsJson(oldAppointment.getChronicConditionsJson())
+                                                .chronicConditionOthersJson(oldAppointment.getChronicConditionOthersJson())
+                                                .functionalImpact(oldAppointment.getFunctionalImpact())
+                                                .redFlagSelectionsJson(oldAppointment.getRedFlagSelectionsJson())
+                                                .preTriageMatchedTermsJson(oldAppointment.getPreTriageMatchedTermsJson())
+                                                .preTriageMatchedRulesJson(oldAppointment.getPreTriageMatchedRulesJson())
+                                                .preTriageSource(oldAppointment.getPreTriageSource())
+                                                .preTriageConfidenceLevel(oldAppointment.getPreTriageConfidenceLevel())
+                                                .preTriageKnowledgeBaseVersion(oldAppointment.getPreTriageKnowledgeBaseVersion())
+                                                .preTriageRulesetVersion(oldAppointment.getPreTriageRulesetVersion())
+                                                .preTriageAiModelVersion(oldAppointment.getPreTriageAiModelVersion())
+                                                .triageReviewStatus(oldAppointment.getTriageReviewStatus())
+                                                .triageReviewedBy(oldAppointment.getTriageReviewedBy())
+                                                .triageReviewedAt(oldAppointment.getTriageReviewedAt())
+                                                .triageOverrideReason(oldAppointment.getTriageOverrideReason())
                                                 .insuranceNote(oldAppointment.getInsuranceNote())
                                                 .emergencyContactName(oldAppointment.getEmergencyContactName())
                                                 .emergencyContactPhone(oldAppointment.getEmergencyContactPhone())
@@ -1127,6 +1646,83 @@ public class AppointmentAdminService {
         return toAdminResponse(saved);
     }
 
+    @Transactional
+    public AppointmentAdminResponse resolveFollowUpAsClosed(Long appointmentId, Long staffUserId, String note) {
+        Appointment appointment = getAppointment(appointmentId);
+        User staff = getUser(staffUserId);
+
+        if (!Boolean.TRUE.equals(appointment.getFollowUpPending())) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "Follow-up của lịch hẹn này đã được xử lý.");
+        }
+
+        validateClaimOwnership(appointment, staffUserId);
+
+        Map<String, Object> before = snapshotAppointment(appointment);
+        AppointmentStatus previousStatus = appointment.getStatus();
+
+        appointment.setFollowUpPending(false);
+        clearProcessingClaim(appointment);
+
+        Appointment saved = appointmentRepository.save(appointment);
+        saveCallLog(
+                saved,
+                staff,
+                com.PrimeCare.PrimeCare.shared.enums.CallOutcome.CANCELLED,
+                note != null && !note.isBlank() ? note : "Đóng follow-up liên hệ bệnh nhân"
+        );
+        publishSummaryChanged(saved);
+        publishAppointmentUpdated(saved, previousStatus);
+        publishProcessingChanged(saved);
+        appointmentStatusHistoryService.record(saved, previousStatus, saved.getStatus(), staff, note);
+        notifyStaffFollowUpResolved(saved);
+
+        auditLogService.log(staff, "RESOLVE_FOLLOW_UP", "APPOINTMENT", saved.getId(), before, snapshotAppointment(saved));
+
+        return toAdminResponse(saved);
+    }
+
+    private void validateDoctorCancellationRequest(DoctorCancellationRecoveryRequest request) {
+        if (request == null
+                || request.getDoctorId() == null
+                || request.getStartDate() == null
+                || request.getEndDate() == null
+                || request.getStartSession() == null
+                || request.getEndSession() == null) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR, "Thiếu thông tin khoảng hủy lịch của bác sĩ.");
+        }
+        if (request.getStartDate().isAfter(request.getEndDate())) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "Ngày bắt đầu không được sau ngày kết thúc.");
+        }
+        if (request.getStartDate().equals(request.getEndDate())
+                && request.getStartSession().ordinal() > request.getEndSession().ordinal()) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "Buổi bắt đầu phải trước hoặc bằng buổi kết thúc.");
+        }
+    }
+
+    private boolean isSessionCovered(
+            LocalDate targetDate,
+            com.PrimeCare.PrimeCare.shared.enums.BranchSessionType targetSession,
+            LocalDate startDate,
+            LocalDate endDate,
+            com.PrimeCare.PrimeCare.shared.enums.BranchSessionType startSession,
+            com.PrimeCare.PrimeCare.shared.enums.BranchSessionType endSession
+    ) {
+        if (targetDate.isBefore(startDate) || targetDate.isAfter(endDate)) {
+            return false;
+        }
+        if (startDate.equals(endDate)) {
+            return targetSession.ordinal() >= startSession.ordinal()
+                    && targetSession.ordinal() <= endSession.ordinal();
+        }
+        if (targetDate.equals(startDate)) {
+            return targetSession.ordinal() >= startSession.ordinal();
+        }
+        if (targetDate.equals(endDate)) {
+            return targetSession.ordinal() <= endSession.ordinal();
+        }
+        return true;
+    }
+
     private String normalizeCode(String value) {
         String normalized = StringUtil.trimToNull(value);
         return normalized != null ? normalized.toUpperCase().replace(' ', '_') : null;
@@ -1140,6 +1736,7 @@ public class AppointmentAdminService {
 
     private Map<String, Object> snapshotAppointment(Appointment appointment) {
         Map<String, Object> data = new LinkedHashMap<>();
+        data.put("appointmentId", appointment.getId());
         data.put("id", appointment.getId());
         data.put("code", appointment.getCode());
         data.put("status", appointment.getStatus() != null ? appointment.getStatus().name() : null);
@@ -1150,10 +1747,23 @@ public class AppointmentAdminService {
         data.put("branchId", appointment.getBranch() != null ? appointment.getBranch().getId() : null);
         data.put("specialtyId", appointment.getSpecialty() != null ? appointment.getSpecialty().getId() : null);
         data.put("patientEmail", appointment.getPatientEmail());
+        data.put("contactStatus", appointment.getContactStatus() != null ? appointment.getContactStatus().name() : null);
+        data.put("patientResponseStatus", appointment.getPatientResponseStatus() != null ? appointment.getPatientResponseStatus().name() : null);
         data.put("reasonForVisit", appointment.getReasonForVisit());
         data.put("visitType", appointment.getVisitType());
         data.put("triagePriority", appointment.getTriagePriority());
         data.put("triageNote", appointment.getTriageNote());
+        data.put("preTriageLevel", appointment.getPreTriageLevel());
+        data.put("preTriagePriority", appointment.getPreTriagePriority());
+        data.put("preTriageSource", appointment.getPreTriageSource());
+        data.put("preTriageConfidenceLevel", appointment.getPreTriageConfidenceLevel());
+        data.put("preTriageKnowledgeBaseVersion", appointment.getPreTriageKnowledgeBaseVersion());
+        data.put("preTriageRulesetVersion", appointment.getPreTriageRulesetVersion());
+        data.put("preTriageAiModelVersion", appointment.getPreTriageAiModelVersion());
+        data.put("triageReviewStatus", appointment.getTriageReviewStatus());
+        data.put("triageReviewedById", appointment.getTriageReviewedBy() != null ? appointment.getTriageReviewedBy().getId() : null);
+        data.put("triageReviewedAt", appointment.getTriageReviewedAt());
+        data.put("triageOverrideReason", appointment.getTriageOverrideReason());
         data.put("insuranceNote", appointment.getInsuranceNote());
         data.put("emergencyContactName", appointment.getEmergencyContactName());
         data.put("emergencyContactPhone", appointment.getEmergencyContactPhone());
@@ -1168,13 +1778,32 @@ public class AppointmentAdminService {
         data.put("intakeCompletedAt", appointment.getIntakeCompletedAt());
         data.put("confirmedAt", appointment.getConfirmedAt());
         data.put("checkedInAt", appointment.getCheckedInAt());
+        data.put("checkedInLate", appointment.getCheckedInLate());
+        data.put("lateMinutes", appointment.getLateMinutes());
         data.put("completedAt", appointment.getCompletedAt());
         data.put("cancelReason", appointment.getCancelReason());
+        data.put("cancellationReasonType", appointment.getCancellationReasonType() != null ? appointment.getCancellationReasonType().name() : null);
         data.put("noShowMarkedAt", appointment.getNoShowMarkedAt());
         data.put("noShowNote", appointment.getNoShowNote());
         data.put("followUpPending", appointment.getFollowUpPending());
+        data.put("followUpType", appointment.getFollowUpType() != null ? appointment.getFollowUpType().name() : null);
         data.put("rescheduledFromAppointmentId", appointment.getRescheduledFromAppointment() != null ? appointment.getRescheduledFromAppointment().getId() : null);
         data.put("rescheduledAt", appointment.getRescheduledAt());
         return data;
+    }
+
+    private record TriageReviewAuditPayload(
+            String action,
+            String fromPriority,
+            String toPriority,
+            String reason
+    ) {
+    }
+
+    private record FollowUpFilter(
+            Set<AppointmentFollowUpType> followUpTypes,
+            boolean filterTypes,
+            boolean includeLegacyNoShow
+    ) {
     }
 }

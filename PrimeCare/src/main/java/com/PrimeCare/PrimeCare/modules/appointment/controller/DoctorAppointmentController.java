@@ -42,6 +42,24 @@ public class DoctorAppointmentController {
         );
     }
 
+    @GetMapping("/waiting")
+    @PreAuthorize("hasRole('DOCTOR')")
+    public ApiResponse<PageResponse<AppointmentAdminResponse>> myWaitingAppointments(
+            Authentication authentication,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate visitDate,
+            @PageableDefault(size = 50) Pageable pageable
+    ) {
+        Long userId = Long.valueOf(authentication.getName());
+        return ApiResponse.ok(
+                "OK",
+                doctorAppointmentService.myWaitingAppointments(
+                        userId,
+                        visitDate,
+                        PaginationConfig.withoutSort(pageable)
+                )
+        );
+    }
+
     @GetMapping
     @PreAuthorize("hasRole('DOCTOR')")
     public ApiResponse<PageResponse<AppointmentAdminResponse>> myAppointments(

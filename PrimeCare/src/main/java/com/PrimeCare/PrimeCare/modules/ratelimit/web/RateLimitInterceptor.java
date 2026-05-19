@@ -1,6 +1,8 @@
 package com.PrimeCare.PrimeCare.modules.ratelimit.web;
 
 import com.PrimeCare.PrimeCare.modules.ratelimit.config.RateLimitRule;
+import com.PrimeCare.PrimeCare.modules.ratelimit.service.RateLimitDecision;
+import com.PrimeCare.PrimeCare.modules.ratelimit.service.RateLimitRuleProvider;
 import com.PrimeCare.PrimeCare.modules.ratelimit.service.RedisRateLimitService;
 import com.PrimeCare.PrimeCare.shared.exception.ApiException;
 import com.PrimeCare.PrimeCare.shared.exception.ErrorCode;
@@ -13,32 +15,17 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.List;
+import java.util.Optional;
 
 @Component
 @RequiredArgsConstructor
 public class RateLimitInterceptor implements HandlerInterceptor {
 
     private final RedisRateLimitService redisRateLimitService;
+    private final RateLimitRuleProvider rateLimitRuleProvider;
 
     @Value("${app.rate-limit.trusted-proxies:}")
     private String trustedProxies;
-
-    private final List<RateLimitRule> rules = List.of(
-            new RateLimitRule("/api/auth/login", "POST", 5, 300, "LOGIN"),
-            new RateLimitRule("/api/auth/refresh", "POST", 10, 60, "REFRESH"),
-            new RateLimitRule("/api/auth/patient/register", "POST", 10, 60, "PATIENT_REGISTER"),
-            new RateLimitRule("/api/auth/password/forgot", "POST", 10, 60, "FORGOT_PASSWORD"),
-            new RateLimitRule("/api/public/appointments", "POST", 20, 60, "CREATE_APPOINTMENT"),
-            new RateLimitRule("/api/public/contact", "POST", 10, 60, "PUBLIC_CONTACT"),
-            new RateLimitRule("/api/public/assistant/ask", "POST", 10, 60, "PUBLIC_ASSISTANT_ASK"),
-            new RateLimitRule("/api/public/lookup/appointments/request-otp", "POST", 10, 60, "PUBLIC_LOOKUP_APPOINTMENT_REQUEST_OTP"),
-            new RateLimitRule("/api/public/lookup/appointments/verify-otp", "POST", 10, 60, "PUBLIC_LOOKUP_APPOINTMENT_VERIFY_OTP"),
-            new RateLimitRule("/api/public/lookup/results/request-otp", "POST", 10, 60, "PUBLIC_LOOKUP_RESULT_REQUEST_OTP"),
-            new RateLimitRule("/api/public/lookup/results/verify-otp", "POST", 10, 60, "PUBLIC_LOOKUP_RESULT_VERIFY_OTP"),
-            new RateLimitRule("/api/admin/appointments/check-in", "POST", 30, 60, "CHECKIN"),
-            new RateLimitRule("/api/cashier/service-orders/", "POST", 20, 60, "INVOICE_CREATE")
-    );
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
@@ -46,13 +33,21 @@ public class RateLimitInterceptor implements HandlerInterceptor {
         String method = request.getMethod();
         String clientIp = resolveClientIp(request);
 
-        for (RateLimitRule rule : rules) {
-            if (path.startsWith(rule.pathPrefix()) && method.equalsIgnoreCase(rule.method())) {
-                String key = "rl:" + rule.eventType() + ":" + clientIp;
-                if (!redisRateLimitService.tryConsume(key, rule.limit(), rule.windowSeconds())) {
-                    throw new ApiException(ErrorCode.RATE_LIMITED);
-                }
-                break;
+        Optional<RateLimitRule> matchingRule = rateLimitRuleProvider.findMatching(method, path);
+        if (matchingRule.isPresent()) {
+            RateLimitRule rule = matchingRule.get();
+            RateLimitDecision decision = redisRateLimitService.consume(
+                    rule.eventType(),
+                    clientIp,
+                    rule.limitCount(),
+                    rule.windowSeconds(),
+                    rule.bucketSeconds()
+            );
+            response.setHeader("X-RateLimit-Limit", String.valueOf(decision.limit()));
+            response.setHeader("X-RateLimit-Remaining", String.valueOf(decision.remaining()));
+            if (!decision.allowed()) {
+                response.setHeader("Retry-After", String.valueOf(Math.max(1, decision.retryAfterSeconds())));
+                throw new ApiException(ErrorCode.RATE_LIMITED);
             }
         }
 

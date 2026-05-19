@@ -1,10 +1,13 @@
 package com.PrimeCare.PrimeCare.modules.billing.entity;
 
 import com.PrimeCare.PrimeCare.shared.auditing.BaseEntity;
+import com.PrimeCare.PrimeCare.shared.enums.InvoiceItemRefundStatus;
+import com.PrimeCare.PrimeCare.shared.enums.InvoiceItemSourceType;
 import jakarta.persistence.*;
 import lombok.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Getter
 @Setter
@@ -30,6 +33,13 @@ public class InvoiceItem extends BaseEntity {
     @Column(name = "reference_id")
     private Long referenceId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source_item_type", length = 32)
+    private InvoiceItemSourceType sourceItemType;
+
+    @Column(name = "source_item_id")
+    private Long sourceItemId;
+
     @Column(name = "name_snapshot", nullable = false, length = 255)
     private String nameSnapshot;
 
@@ -50,6 +60,22 @@ public class InvoiceItem extends BaseEntity {
 
     @Column(name = "total_amount", nullable = false)
     private Long totalAmount; // Sau thuế
+
+    @Column(name = "refunded_amount", nullable = false)
+    @Builder.Default
+    private Long refundedAmount = 0L;
+
+    @Column(name = "refunded_at")
+    private LocalDateTime refundedAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "refund_status", length = 32)
+    private InvoiceItemRefundStatus refundStatus;
+
+    @PrePersist
+    void prePersist() {
+        if (refundedAmount == null) refundedAmount = 0L;
+    }
 
     public enum ReferenceType {
         CLINICAL_SERVICE,

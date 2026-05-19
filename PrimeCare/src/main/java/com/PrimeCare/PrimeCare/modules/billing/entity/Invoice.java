@@ -1,6 +1,7 @@
 package com.PrimeCare.PrimeCare.modules.billing.entity;
 
 import com.PrimeCare.PrimeCare.modules.auth.entity.User;
+import com.PrimeCare.PrimeCare.modules.prescription.entity.Prescription;
 import com.PrimeCare.PrimeCare.modules.service_order.entity.ServiceOrder;
 import com.PrimeCare.PrimeCare.shared.auditing.BaseEntity;
 import com.PrimeCare.PrimeCare.shared.enums.PaymentMethod;
@@ -20,7 +21,8 @@ import java.time.LocalDateTime;
         name = "invoices",
         uniqueConstraints = {
                 @UniqueConstraint(name = "uq_invoice_code", columnNames = "code"),
-                @UniqueConstraint(name = "uq_invoice_service_order", columnNames = "service_order_id")
+                @UniqueConstraint(name = "uq_invoice_service_order", columnNames = "service_order_id"),
+                @UniqueConstraint(name = "uq_invoice_prescription", columnNames = "prescription_id")
         }
 )
 // Monetary amounts are stored as whole VND dong. Do not treat these Long fields as decimal major units.
@@ -34,8 +36,12 @@ public class Invoice extends BaseEntity {
     private String code;
 
     @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "service_order_id", nullable = false, unique = true)
+    @JoinColumn(name = "service_order_id", unique = true)
     private ServiceOrder serviceOrder;
+
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "prescription_id", unique = true)
+    private Prescription prescription;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cashier_id")

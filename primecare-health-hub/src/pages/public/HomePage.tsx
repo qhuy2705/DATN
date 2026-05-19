@@ -38,6 +38,7 @@ import {
   useSpecialties,
 } from '@/hooks/use-public-data';
 import { toLocalDateInputValue } from '@/lib/date';
+import { isPublicDoctorBookable, isPublicDoctorBookableForSpecialty } from '@/lib/doctor-readiness';
 import type { Branch, Doctor, MedicalService, PublicFaqItem, Specialty } from '@/types/api';
 import heroDoctor from '@/assets/hero-doctor.jpg';
 
@@ -87,7 +88,10 @@ function QuickAvailabilitySearch({ branches, isEn }: { branches: Branch[]; isEn:
     [branchId, specialtyId],
   );
   const { data: doctorsPage } = useDoctors(doctorParams);
-  const doctors = doctorsPage?.items ?? [];
+  const doctors = useMemo(
+    () => (doctorsPage?.items ?? []).filter((doctor) => isPublicDoctorBookableForSpecialty(doctor, specialtyId)),
+    [doctorsPage?.items, specialtyId],
+  );
   const targetUrl = buildAvailabilityUrl({ branchId, specialtyId, doctorId, visitDate, session });
 
   return (
@@ -277,7 +281,7 @@ export default function HomePage() {
   const faqsQuery = usePublicFaqs();
   const branches = branchesQuery.data ?? [];
   const specialties = specialtiesQuery.data ?? [];
-  const doctors = doctorsQuery.data?.items ?? [];
+  const doctors = (doctorsQuery.data?.items ?? []).filter(isPublicDoctorBookable);
   const doctorCount = doctorsQuery.data?.meta.totalItems ?? doctors.length;
   const services = servicesQuery.data ?? [];
   const faqs = faqsQuery.data ?? [];
@@ -335,7 +339,7 @@ export default function HomePage() {
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
               <Button asChild size="lg" variant="secondary" className="rounded-xl shadow-elevated"><Link to="/availability">{isEn ? 'Find available slots' : 'Tìm lịch trống'} <ArrowRight className="ml-2 h-4 w-4" /></Link></Button>
-              <Button asChild size="lg" variant="outline" className="rounded-xl border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white"><Link to="/booking">{isEn ? 'Book now' : 'Đặt lịch ngay'}</Link></Button>
+              <Button asChild size="lg" variant="outline" className="rounded-xl border-white/30 bg-foreground/10 text-white hover:bg-foreground/20 hover:text-white"><Link to="/booking">{isEn ? 'Book now' : 'Đặt lịch ngay'}</Link></Button>
             </div>
           </div>
         </Card>

@@ -4,6 +4,7 @@ import com.PrimeCare.PrimeCare.modules.appointment.service.AppointmentAvailabili
 import com.PrimeCare.PrimeCare.modules.auth.repository.UserRepository;
 import com.PrimeCare.PrimeCare.modules.masterdata.doctor.dto.response.DoctorProfileResponse;
 import com.PrimeCare.PrimeCare.modules.masterdata.doctor.entity.DoctorProfile;
+import com.PrimeCare.PrimeCare.modules.masterdata.doctor.entity.DoctorSpecialty;
 import com.PrimeCare.PrimeCare.modules.masterdata.doctor.mapper.DoctorProfileMapper;
 import com.PrimeCare.PrimeCare.modules.masterdata.doctor.repository.DoctorProfileRepository;
 import com.PrimeCare.PrimeCare.modules.masterdata.specialty.service.BranchSpecialtyService;
@@ -20,6 +21,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.Comparator;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -55,13 +58,8 @@ public class PublicDoctorService {
 
     @Transactional(readOnly = true)
     public DoctorProfileResponse getById(Long id) {
-        DoctorProfile doctor = doctorProfileRepository.findById(id)
+        DoctorProfile doctor = doctorProfileRepository.findPublicBookableById(id)
                                                       .orElseThrow(() -> new ApiException(ErrorCode.DOCTOR_NOT_FOUND));
-
-        DoctorStatus currentStatus = doctor.getStatus() != null ? doctor.getStatus() : DoctorStatus.ACTIVE;
-        if (currentStatus != DoctorStatus.ACTIVE || doctor.getBranch().getStatus() != BranchStatus.ACTIVE) {
-            throw new ApiException(ErrorCode.DOCTOR_NOT_FOUND);
-        }
 
         return toResponse(doctor, null);
     }
@@ -72,6 +70,7 @@ public class PublicDoctorService {
                 userRepository.findByDoctorProfile_Id(doctor.getId()).orElse(null)
         );
 
+        filterPublicSpecialties(response, doctor);
         sanitizeForPublic(response);
         enrichUpcomingAvailability(response, doctor, requestedSpecialtyId);
         return response;
@@ -79,12 +78,70 @@ public class PublicDoctorService {
 
 
     private void sanitizeForPublic(DoctorProfileResponse response) {
-        response.setHasAccount(false);
         response.setAccountId(null);
         response.setAccountEmail(null);
         response.setAccountPhone(null);
         response.setAccountRole(null);
         response.setAccountStatus(null);
+        response.setOperationalReady(response.isBookable());
+        response.setNotReadyReason(response.isBookable()
+                ? null
+                : DoctorOperationalGuardService.toPublicNotReadyReason(response.getNotReadyReason()));
+    }
+
+    private void filterPublicSpecialties(DoctorProfileResponse response, DoctorProfile doctor) {
+        List<DoctorSpecialty> publicSpecialties = publicValidSpecialties(doctor);
+
+        response.setSpecialtyIds(publicSpecialties.stream()
+                                                  .map(item -> item.getSpecialty().getId())
+                                                  .toList());
+
+        if (publicSpecialties.isEmpty()) {
+            response.setSpecialtyNameVn(null);
+            response.setSpecialtyNameEn(null);
+            if (response.isBookable()) {
+                response.setBookable(false);
+                response.setOperationalReady(false);
+                response.setNotReadyReason(DoctorOperationalGuardService.PUBLIC_REASON_NOT_AVAILABLE);
+            }
+            return;
+        }
+
+        var primarySpecialty = publicSpecialties.getFirst().getSpecialty();
+        response.setSpecialtyNameVn(primarySpecialty.getNameVn());
+        response.setSpecialtyNameEn(primarySpecialty.getNameEn());
+    }
+
+    private List<DoctorSpecialty> publicValidSpecialties(DoctorProfile doctor) {
+        if (doctor.getDoctorSpecialties() == null || doctor.getDoctorSpecialties().isEmpty()) {
+            return List.of();
+        }
+
+        return doctor.getDoctorSpecialties().stream()
+                     .filter(item -> isPublicValidSpecialty(doctor, item))
+                     .sorted(Comparator.comparing(item -> item.getSpecialty().getId()))
+                     .toList();
+    }
+
+    private boolean isPublicValidSpecialty(DoctorProfile doctor, DoctorSpecialty doctorSpecialty) {
+        if (doctor.getBranch() == null
+                || doctor.getBranch().getId() == null
+                || doctor.getBranch().getStatus() != BranchStatus.ACTIVE
+                || doctorSpecialty.getSpecialty() == null
+                || doctorSpecialty.getSpecialty().getId() == null
+                || !"ACTIVE".equalsIgnoreCase(doctorSpecialty.getSpecialty().getStatus())) {
+            return false;
+        }
+
+        try {
+            branchSpecialtyService.validateBranchSpecialtyActive(
+                    doctor.getBranch().getId(),
+                    doctorSpecialty.getSpecialty().getId()
+            );
+            return true;
+        } catch (ApiException ignored) {
+            return false;
+        }
     }
 
     private void enrichUpcomingAvailability(DoctorProfileResponse response, DoctorProfile doctor, Long requestedSpecialtyId) {
@@ -96,12 +153,15 @@ public class PublicDoctorService {
         }
 
         Long specialtyId = requestedSpecialtyId;
-        if (specialtyId == null && doctor.getDoctorSpecialties() != null) {
-            specialtyId = doctor.getDoctorSpecialties().stream()
-                                .filter(item -> item.getSpecialty() != null)
-                                .map(item -> item.getSpecialty().getId())
-                                .findFirst()
-                                .orElse(null);
+        if (specialtyId == null && response.getSpecialtyIds() != null) {
+            specialtyId = response.getSpecialtyIds().stream()
+                                  .findFirst()
+                                  .orElse(null);
+        }
+
+        if (specialtyId != null
+                && (response.getSpecialtyIds() == null || !response.getSpecialtyIds().contains(specialtyId))) {
+            return;
         }
 
         if (specialtyId == null) {

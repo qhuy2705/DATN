@@ -1,7 +1,10 @@
 package com.PrimeCare.PrimeCare.modules.prescription.dto.response;
 
+import com.PrimeCare.PrimeCare.shared.enums.PrescriptionItemStatus;
 import lombok.Builder;
 import lombok.Data;
+
+import java.time.LocalDateTime;
 
 @Data
 @Builder
@@ -19,4 +22,7 @@ public class PrescriptionItemResponse {
     private Integer durationDays;
     private String route;
     private String instruction;
+    private PrescriptionItemStatus status;
+    private String refundReason;
+    private LocalDateTime refundedAt;
 }

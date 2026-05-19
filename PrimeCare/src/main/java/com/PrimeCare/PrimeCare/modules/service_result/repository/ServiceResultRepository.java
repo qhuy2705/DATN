@@ -1,6 +1,7 @@
 package com.PrimeCare.PrimeCare.modules.service_result.repository;
 
 import com.PrimeCare.PrimeCare.modules.service_result.entity.ServiceResult;
+import com.PrimeCare.PrimeCare.shared.enums.ServiceResultStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
@@ -30,12 +31,24 @@ public interface ServiceResultRepository extends JpaRepository<ServiceResult, Lo
     })
     Page<ServiceResult> findByServiceOrderItem_ServiceOrder_Encounter_Patient_IdOrderByVerifiedAtDescCreatedAtDesc(Long patientId, Pageable pageable);
 
+    @EntityGraph(attributePaths = {
+            "serviceOrderItem",
+            "serviceOrderItem.serviceOrder",
+            "serviceOrderItem.serviceOrder.encounter"
+    })
+    Page<ServiceResult> findByServiceOrderItem_ServiceOrder_Encounter_Patient_IdAndStatusOrderByVerifiedAtDescCreatedAtDesc(
+            Long patientId,
+            ServiceResultStatus status,
+            Pageable pageable
+    );
+
     long countByServiceOrderItem_ServiceOrder_Encounter_Patient_Id(Long patientId);
 
     @org.springframework.data.jpa.repository.Query("""
             select count(sr)
             from ServiceResult sr
             where sr.serviceOrderItem.serviceOrder.encounter.patient.id = :patientId
+              and sr.status = com.PrimeCare.PrimeCare.shared.enums.ServiceResultStatus.VERIFIED
               and sr.reportPdfPath is not null
               and trim(sr.reportPdfPath) <> ''
             """)

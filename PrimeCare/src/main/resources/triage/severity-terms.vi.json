@@ -1,0 +1,26 @@
+{
+  "version": "2026.05.01",
+  "items": [
+    {
+      "code": "MILD",
+      "label": "Mức độ nhẹ",
+      "synonyms": ["nhẹ", "hơi đau", "ít", "không nhiều"],
+      "weight": 5,
+      "priorityHint": "ROUTINE"
+    },
+    {
+      "code": "MODERATE",
+      "label": "Mức độ vừa",
+      "synonyms": ["vừa", "khá đau", "mệt nhiều", "khó chịu nhiều"],
+      "weight": 15,
+      "priorityHint": "PRIORITY"
+    },
+    {
+      "code": "SEVERE",
+      "label": "Mức độ nặng",
+      "synonyms": ["nặng", "rất đau", "dữ dội", "không chịu được", "thở không nổi"],
+      "weight": 30,
+      "priorityHint": "PRIORITY"
+    }
+  ]
+}

@@ -41,11 +41,11 @@ export default function MedicalServiceDetailPage() {
       <div className="absolute right-0 bottom-0 translate-x-1/3 translate-y-1/3 h-[600px] w-[600px] rounded-full bg-primary/10 blur-[80px] pointer-events-none"></div>
 
       <div className="container-wide max-w-4xl space-y-6 relative z-10 py-10">
-        <Button variant="ghost" asChild className="px-4 py-2 h-auto rounded-xl bg-white/50 hover:bg-white/80 backdrop-blur-sm transition-all mb-4">
+        <Button variant="ghost" asChild className="mb-4 h-auto rounded-xl bg-card/60 px-4 py-2 backdrop-blur-sm transition-all hover:bg-card/80">
           <Link to="/medical-services"><ArrowLeft className="mr-2 h-4 w-4" />{isEn ? 'Back to services' : 'Quay lại danh sách dịch vụ'}</Link>
         </Button>
 
-        <Card className="rounded-[2.5rem] border-0 shadow-[0_8px_30px_rgb(0,0,0,0.04)] bg-white/60 backdrop-blur-xl dark:bg-slate-900/60 overflow-hidden relative">
+        <Card className="relative overflow-hidden rounded-[2.5rem] border-0 bg-card/70 shadow-[0_8px_30px_rgb(0,0,0,0.04)] backdrop-blur-xl">
           <div className="absolute top-0 right-0 h-40 w-40 bg-gradient-to-br from-primary/20 to-primary/0 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
           
           <CardContent className="space-y-10 p-8 md:p-12 relative z-10">
@@ -59,7 +59,7 @@ export default function MedicalServiceDetailPage() {
             </div>
 
             <div className="grid gap-6 md:grid-cols-3">
-              <div className="rounded-3xl border border-primary/10 bg-white/50 p-6 shadow-sm backdrop-blur-md transition-all hover:-translate-y-1 hover:shadow-md dark:bg-slate-800/50">
+              <div className="rounded-3xl border border-primary/10 bg-card/70 p-6 shadow-sm backdrop-blur-md transition-all hover:-translate-y-1 hover:shadow-md">
                 <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                   <ReceiptText className="h-6 w-6" />
                 </div>
@@ -71,7 +71,7 @@ export default function MedicalServiceDetailPage() {
                 </div>
               </div>
               
-              <div className="rounded-3xl border border-primary/10 bg-white/50 p-6 shadow-sm backdrop-blur-md transition-all hover:-translate-y-1 hover:shadow-md dark:bg-slate-800/50">
+              <div className="rounded-3xl border border-primary/10 bg-card/70 p-6 shadow-sm backdrop-blur-md transition-all hover:-translate-y-1 hover:shadow-md">
                 <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                   <Clock3 className="h-6 w-6" />
                 </div>
@@ -79,7 +79,7 @@ export default function MedicalServiceDetailPage() {
                 <div className="text-2xl font-bold text-foreground">{service.defaultTurnaroundMinutes ? `${service.defaultTurnaroundMinutes} ${isEn ? 'minutes' : 'phút'}` : (isEn ? 'Depending on workflow' : 'Phụ thuộc quy trình')}</div>
               </div>
               
-              <div className="rounded-3xl border border-primary/10 bg-white/50 p-6 shadow-sm backdrop-blur-md transition-all hover:-translate-y-1 hover:shadow-md dark:bg-slate-800/50">
+              <div className="rounded-3xl border border-primary/10 bg-card/70 p-6 shadow-sm backdrop-blur-md transition-all hover:-translate-y-1 hover:shadow-md">
                 <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                   <Calendar className="h-6 w-6" />
                 </div>

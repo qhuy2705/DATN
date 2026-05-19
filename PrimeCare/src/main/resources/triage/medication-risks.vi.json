@@ -1,0 +1,21 @@
+{
+  "version": "2026.05.01",
+  "items": [
+    {
+      "code": "ON_BLOOD_THINNER",
+      "label": "Đang dùng thuốc chống đông",
+      "synonyms": ["thuốc chống đông", "thuốc loãng máu", "warfarin", "rivaroxaban", "apixaban", "dabigatran"],
+      "riskGroup": "MEDICATION_RISK",
+      "weight": 25,
+      "autoUrgent": false
+    },
+    {
+      "code": "IMMUNOSUPPRESSANT_USE",
+      "label": "Thuốc ức chế miễn dịch",
+      "synonyms": ["thuốc ức chế miễn dịch", "cyclosporin", "tacrolimus", "methotrexate", "corticoid kéo dài"],
+      "riskGroup": "MEDICATION_RISK",
+      "weight": 20,
+      "autoUrgent": false
+    }
+  ]
+}

@@ -31,6 +31,7 @@ import com.PrimeCare.PrimeCare.modules.service_result.repository.ServiceResultSt
 import com.PrimeCare.PrimeCare.shared.common.PageResponse;
 import com.PrimeCare.PrimeCare.shared.enums.AppointmentStatus;
 import com.PrimeCare.PrimeCare.shared.enums.PatientStatus;
+import com.PrimeCare.PrimeCare.shared.enums.ServiceResultStatus;
 import com.PrimeCare.PrimeCare.shared.enums.UserRole;
 import com.PrimeCare.PrimeCare.shared.exception.ApiException;
 import com.PrimeCare.PrimeCare.shared.exception.ErrorCode;
@@ -89,7 +90,11 @@ public class PatientPortalService {
                 .toList();
 
         List<PatientResultHistoryItemResponse> recentResults = serviceResultRepository
-                .findByServiceOrderItem_ServiceOrder_Encounter_Patient_IdOrderByVerifiedAtDescCreatedAtDesc(patient.getId(), recentRequest)
+                .findByServiceOrderItem_ServiceOrder_Encounter_Patient_IdAndStatusOrderByVerifiedAtDescCreatedAtDesc(
+                        patient.getId(),
+                        ServiceResultStatus.VERIFIED,
+                        recentRequest
+                )
                 .getContent()
                 .stream()
                 .map(this::toResultHistoryItem)
@@ -284,7 +289,11 @@ public class PatientPortalService {
     @Transactional(readOnly = true)
     public PageResponse<PatientResultHistoryItemResponse> listMyResults(Long userId, Pageable pageable) {
         Patient patient = resolvePatient(userId);
-        Page<ServiceResult> page = serviceResultRepository.findByServiceOrderItem_ServiceOrder_Encounter_Patient_IdOrderByVerifiedAtDescCreatedAtDesc(patient.getId(), pageable);
+        Page<ServiceResult> page = serviceResultRepository.findByServiceOrderItem_ServiceOrder_Encounter_Patient_IdAndStatusOrderByVerifiedAtDescCreatedAtDesc(
+                patient.getId(),
+                ServiceResultStatus.VERIFIED,
+                pageable
+        );
         return PageResponse.<PatientResultHistoryItemResponse>builder()
                 .items(page.getContent().stream().map(this::toResultHistoryItem).toList())
                 .meta(PageResponse.Meta.builder()
@@ -313,9 +322,7 @@ public class PatientPortalService {
     public byte[] downloadMyResultPdf(Long userId, Long resultId) {
         Patient patient = resolvePatient(userId);
         ServiceResult result = resolveResultForPatient(patient.getId(), resultId);
-        if (result.getReportPdfPath() == null || result.getReportPdfPath().isBlank()) {
-            throw new ApiException(ErrorCode.INVALID_REQUEST, "PDF kết quả chưa sẵn sàng để xem");
-        }
+        ensureVerifiedResultPdfReady(result);
         return fileStorageService.downloadAsBytes(result.getReportPdfPath());
     }
 
@@ -323,10 +330,20 @@ public class PatientPortalService {
     public String buildResultPdfFileName(Long userId, Long resultId) {
         Patient patient = resolvePatient(userId);
         ServiceResult result = resolveResultForPatient(patient.getId(), resultId);
+        ensureVerifiedResultPdfReady(result);
         String suffix = result.getServiceOrderItem() != null && result.getServiceOrderItem().getId() != null
                 ? result.getServiceOrderItem().getId().toString()
                 : result.getId().toString();
         return "service-result-" + suffix + ".pdf";
+    }
+
+    private void ensureVerifiedResultPdfReady(ServiceResult result) {
+        if (result.getStatus() != ServiceResultStatus.VERIFIED) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "Kết quả chưa được xác thực để xem");
+        }
+        if (result.getReportPdfPath() == null || result.getReportPdfPath().isBlank()) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "PDF kết quả chưa sẵn sàng để xem");
+        }
     }
 
     private User resolveUser(Long userId) {
